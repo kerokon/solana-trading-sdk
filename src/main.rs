@@ -29,6 +29,7 @@ pub fn get_solana_client() -> Arc<RpcClient> {
 }
 
 pub fn get_swqos_client() -> DefaultSWQoSClient {
+
     let swqos_client = DefaultSWQoSClient::new("default", get_solana_client(), RPC_ENDPOINT.to_string(), None, vec![]);
     swqos_client
 }
