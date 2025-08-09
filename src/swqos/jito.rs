@@ -2,7 +2,7 @@ use super::{
     swqos_rpc::{SWQoSClientTrait, SWQoSRequest},
     SWQoSTrait,
 };
-use crate::swqos::swqos_rpc::FormatBase64VersionedTransaction;
+use crate::{common::transaction::Transaction, swqos::swqos_rpc::FormatBase64VersionedTransaction};
 use rand::seq::IndexedRandom;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{pubkey, pubkey::Pubkey, transaction::VersionedTransaction};
@@ -42,19 +42,32 @@ pub struct JitoClient {
 
 #[async_trait::async_trait]
 impl SWQoSTrait for JitoClient {
-    async fn send_transaction(&self, transaction: VersionedTransaction) -> anyhow::Result<()> {
+    async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
+        let versioned_tx = match transaction {
+            Transaction::Legacy(tx) => VersionedTransaction::from(tx),
+            Transaction::Versioned(tx) => tx,
+        };
+
         self.swqos_client
             .swqos_send_transaction(SWQoSRequest {
                 name: self.get_name().to_string(),
                 url: format!("{}/api/v1/transactions", self.swqos_endpoint),
                 auth_header: None,
-                transactions: vec![transaction],
+                transactions: vec![versioned_tx],
             })
             .await
     }
 
-    async fn send_transactions(&self, transactions: Vec<VersionedTransaction>) -> anyhow::Result<()> {
-        let txs_base64 = transactions.iter().map(|tx| tx.to_base64_string()).collect::<Vec<String>>();
+    async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
+        let versioned_txs = transactions
+            .into_iter()
+            .map(|tx| match tx {
+                Transaction::Legacy(tx) => VersionedTransaction::from(tx),
+                Transaction::Versioned(tx) => tx,
+            })
+            .collect::<Vec<_>>();
+
+        let txs_base64 = versioned_txs.iter().map(|tx| tx.to_base64_string()).collect::<Vec<String>>();
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "sendBundle",
@@ -71,7 +84,7 @@ impl SWQoSTrait for JitoClient {
                     name: self.get_name().to_string(),
                     url: format!("{}/api/v1/bundles", self.swqos_endpoint),
                     auth_header: None,
-                    transactions: transactions,
+                    transactions: versioned_txs,
                 },
                 body,
             )

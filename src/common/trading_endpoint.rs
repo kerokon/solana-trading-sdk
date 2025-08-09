@@ -1,4 +1,5 @@
 use crate::{
+    common::transaction::Transaction,
     instruction::builder::{build_transaction, PriorityFee, TipFee},
     swqos::SWQoSTrait,
 };
@@ -60,7 +61,11 @@ impl TradingEndpoint {
             };
 
             let tx = build_transaction(payer, instructions.clone(), blockhash, fee, tip, other_signers.clone())?;
-            signatures.push(tx.signatures[0]);
+            let signature = match tx {
+                Transaction::Legacy(ref tx) => tx.signatures[0],
+                Transaction::Versioned(ref tx) => tx.signatures[0],
+            };
+            signatures.push(signature);
             txs.push(Some(tx));
         }
 
@@ -99,7 +104,10 @@ impl TradingEndpoint {
                 .map(|item| build_transaction(&item.payer, item.instructions.clone(), blockhash, Some(fee), tip.take(), None))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            signatures.extend(txs.iter().map(|tx| tx.signatures[0]));
+            signatures.extend(txs.iter().map(|tx| match tx {
+                Transaction::Legacy(ref tx) => tx.signatures[0],
+                Transaction::Versioned(ref tx) => tx.signatures[0],
+            }));
             tasks.push(swqos.send_transactions(txs));
         }
 

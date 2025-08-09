@@ -1,14 +1,14 @@
-use crate::{common::accounts::PUBKEY_WSOL, dex::types::CreateATA};
+use crate::{common::{accounts::PUBKEY_WSOL, transaction::Transaction}, dex::types::CreateATA};
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     hash::Hash,
     instruction::Instruction,
-    message::{v0, VersionedMessage},
+    message::{v0, Message, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{Transaction as LegacyTransaction, VersionedTransaction},
 };
 use spl_associated_token_account::{
     get_associated_token_address,
@@ -35,7 +35,7 @@ pub fn build_transaction(
     fee: Option<PriorityFee>,
     tip: Option<TipFee>,
     other_signers: Option<Vec<&Keypair>>,
-) -> anyhow::Result<VersionedTransaction> {
+) -> anyhow::Result<Transaction> {
     let mut insts = vec![];
     if let Some(fee) = fee {
         insts.push(ComputeBudgetInstruction::set_compute_unit_price(fee.unit_price));
@@ -53,7 +53,25 @@ pub fn build_transaction(
     let signers = vec![payer].into_iter().chain(other_signers.unwrap_or_default().into_iter()).collect::<Vec<_>>();
     let transaction = VersionedTransaction::try_new(versioned_message, &signers)?;
 
-    Ok(transaction)
+    Ok(Transaction::Versioned(transaction))
+}
+
+pub fn build_legacy_transaction(
+    payer: &Keypair,
+    instructions: Vec<Instruction>,
+    blockhash: Hash,
+    other_signers: Option<Vec<&Keypair>>,
+) -> anyhow::Result<Transaction> {
+    let mut signers = vec![payer];
+    if let Some(other_signers) = other_signers {
+        signers.extend(other_signers);
+    }
+
+    let message = Message::new(&instructions, Some(&payer.pubkey()));
+    let mut transaction = LegacyTransaction::new_unsigned(message);
+    transaction.sign(&signers, blockhash);
+
+    Ok(Transaction::Legacy(transaction))
 }
 
 pub fn build_sol_buy_instructions(payer: &Keypair, mint: &Pubkey, buy_instruction: Instruction, crate_ata: CreateATA) -> anyhow::Result<Vec<Instruction>> {

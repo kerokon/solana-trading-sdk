@@ -2,7 +2,7 @@ use super::{
     swqos_rpc::{SWQoSClientTrait, SWQoSRequest},
     SWQoSTrait,
 };
-use crate::instruction::builder::{build_transaction, PriorityFee};
+use crate::{common::transaction::Transaction, instruction::builder::{build_transaction, PriorityFee}};
 use rand::seq::IndexedRandom;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcTransactionConfig};
 use solana_sdk::{
@@ -28,24 +28,37 @@ pub struct DefaultSWQoSClient {
 
 #[async_trait::async_trait]
 impl SWQoSTrait for DefaultSWQoSClient {
-    async fn send_transaction(&self, transaction: VersionedTransaction) -> anyhow::Result<()> {
+    async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
+        let versioned_tx = match transaction {
+            Transaction::Legacy(tx) => VersionedTransaction::from(tx),
+            Transaction::Versioned(tx) => tx,
+        };
+
         self.swqos_client
             .swqos_send_transaction(SWQoSRequest {
                 name: self.name.clone(),
                 url: self.swqos_endpoint.clone(),
                 auth_header: self.swqos_header.clone(),
-                transactions: vec![transaction],
+                transactions: vec![versioned_tx],
             })
             .await
     }
 
-    async fn send_transactions(&self, transactions: Vec<VersionedTransaction>) -> anyhow::Result<()> {
+    async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
+        let versioned_txs = transactions
+            .into_iter()
+            .map(|tx| match tx {
+                Transaction::Legacy(tx) => VersionedTransaction::from(tx),
+                Transaction::Versioned(tx) => tx,
+            })
+            .collect();
+
         self.swqos_client
             .swqos_send_transactions(SWQoSRequest {
                 name: self.name.clone(),
                 url: self.swqos_endpoint.clone(),
                 auth_header: self.swqos_header.clone(),
-                transactions,
+                transactions: versioned_txs,
             })
             .await
     }
@@ -82,7 +95,10 @@ impl DefaultSWQoSClient {
         let blockhash = self.rpc_client.get_latest_blockhash().await?;
         let instruction = solana_sdk::system_instruction::transfer(&from.pubkey(), to, amount);
         let transaction = build_transaction(from, vec![instruction], blockhash, fee, None, None)?;
-        let signature = transaction.signatures[0];
+        let signature = match transaction {
+            Transaction::Legacy(ref tx) => tx.signatures[0],
+            Transaction::Versioned(ref tx) => tx.signatures[0],
+        };
         self.send_transaction(transaction).await?;
         Ok(signature)
     }
@@ -94,7 +110,10 @@ impl DefaultSWQoSClient {
             .map(|transfer| solana_sdk::system_instruction::transfer(&from.pubkey(), &transfer.to, transfer.amount))
             .collect::<Vec<_>>();
         let transaction = build_transaction(from, instructions, blockhash, fee, None, None)?;
-        let signature = transaction.signatures[0];
+        let signature = match transaction {
+            Transaction::Legacy(ref tx) => tx.signatures[0],
+            Transaction::Versioned(ref tx) => tx.signatures[0],
+        };
         self.send_transaction(transaction).await?;
         Ok(signature)
     }
@@ -106,7 +125,10 @@ impl DefaultSWQoSClient {
         let create_ata = create_associated_token_account_idempotent(&from.pubkey(), to, &mint, &spl_token::ID);
         let instruction = spl_token::instruction::transfer(&spl_token::ID, &from_ata, &to_ata, &from.pubkey(), &[], amount)?;
         let transaction = build_transaction(from, vec![create_ata, instruction], blockhash, fee, None, None)?;
-        let signature = transaction.signatures[0];
+        let signature = match transaction {
+            Transaction::Legacy(ref tx) => tx.signatures[0],
+            Transaction::Versioned(ref tx) => tx.signatures[0],
+        };
         self.send_transaction(transaction).await?;
         Ok(signature)
     }
@@ -125,7 +147,10 @@ impl DefaultSWQoSClient {
         }
 
         let transaction = build_transaction(from, instructions, blockhash, fee, None, None)?;
-        let signature = transaction.signatures[0];
+        let signature = match transaction {
+            Transaction::Legacy(ref tx) => tx.signatures[0],
+            Transaction::Versioned(ref tx) => tx.signatures[0],
+        };
         self.send_transaction(transaction).await?;
         Ok(signature)
     }

@@ -1,5 +1,5 @@
 use super::{swqos_rpc::SWQoSRequest, SWQoSTrait};
-use crate::swqos::swqos_rpc::SWQoSClientTrait;
+use crate::{common::transaction::Transaction, swqos::swqos_rpc::SWQoSClientTrait};
 use base64::{engine::general_purpose, Engine};
 use rand::seq::IndexedRandom;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -30,8 +30,13 @@ pub struct NextBlockClient {
 
 #[async_trait::async_trait]
 impl SWQoSTrait for NextBlockClient {
-    async fn send_transaction(&self, transaction: VersionedTransaction) -> anyhow::Result<()> {
-        let tx_bytes = bincode::serialize(&transaction)?;
+    async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
+        let versioned_tx = match transaction {
+            Transaction::Legacy(tx) => VersionedTransaction::from(tx),
+            Transaction::Versioned(tx) => tx,
+        };
+
+        let tx_bytes = bincode::serialize(&versioned_tx)?;
         let tx_base64 = general_purpose::STANDARD.encode(tx_bytes);
         let body = serde_json::json!({
             "transaction": {
@@ -47,16 +52,24 @@ impl SWQoSTrait for NextBlockClient {
                     name: self.get_name().to_string(),
                     url: url.clone(),
                     auth_header: self.swqos_header.clone(),
-                    transactions: vec![transaction],
+                    transactions: vec![versioned_tx],
                 },
                 body,
             )
             .await
     }
 
-    async fn send_transactions(&self, transactions: Vec<VersionedTransaction>) -> anyhow::Result<()> {
+    async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
+        let versioned_txs = transactions
+            .into_iter()
+            .map(|tx| match tx {
+                Transaction::Legacy(tx) => VersionedTransaction::from(tx),
+                Transaction::Versioned(tx) => tx,
+            })
+            .collect::<Vec<_>>();
+
         let body = serde_json::json!({
-            "entries":  transactions
+            "entries":  versioned_txs
                 .iter()
                 .map(|tx| {
                     let tx_bytes = bincode::serialize(tx).unwrap();
@@ -77,7 +90,7 @@ impl SWQoSTrait for NextBlockClient {
                     name: self.get_name().to_string(),
                     url: url.clone(),
                     auth_header: self.swqos_header.clone(),
-                    transactions,
+                    transactions: versioned_txs,
                 },
                 body,
             )

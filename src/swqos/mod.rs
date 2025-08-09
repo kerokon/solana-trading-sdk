@@ -1,3 +1,4 @@
+use crate::common::transaction::Transaction;
 pub mod blox;
 pub mod default;
 pub mod jito;
@@ -11,7 +12,7 @@ use default::DefaultSWQoSClient;
 use jito::JitoClient;
 use nextblock::NextBlockClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{pubkey::Pubkey, transaction::VersionedTransaction};
+use solana_sdk::pubkey::Pubkey;
 use std::{any::Any, sync::Arc};
 use temporal::TEMPORAL_TIP_ACCOUNTS;
 use zeroslot::ZEROSLOT_TIP_ACCOUNTS;
@@ -29,8 +30,8 @@ pub enum SWQoSType {
 
 #[async_trait::async_trait]
 pub trait SWQoSTrait: Send + Sync + Any {
-    async fn send_transaction(&self, transaction: VersionedTransaction) -> anyhow::Result<()>;
-    async fn send_transactions(&self, transactions: Vec<VersionedTransaction>) -> anyhow::Result<()>;
+    async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()>;
+    async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()>;
     fn get_tip_account(&self) -> Option<Pubkey>;
     fn get_name(&self) -> &str;
 }
