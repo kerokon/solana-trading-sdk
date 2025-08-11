@@ -33,14 +33,10 @@ pub struct BloxClient {
 #[async_trait::async_trait]
 impl SWQoSTrait for BloxClient {
     async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
-        let versioned_tx = match transaction {
-            Transaction::Legacy(tx) => VersionedTransaction::from(tx),
-            Transaction::Versioned(tx) => tx,
-        };
 
         let body = serde_json::json!({
             "transaction": {
-                "content": versioned_tx.to_base64_string(),
+                "content": transaction.to_base64_string(),
             },
             "frontRunningProtection": false,
             "useStakedRPCs": true,
@@ -52,7 +48,7 @@ impl SWQoSTrait for BloxClient {
                     name: self.get_name().to_string(),
                     url: format!("{}/api/v2/submit", self.swqos_endpoint),
                     auth_header: self.swqos_header.clone(),
-                    transactions: vec![versioned_tx],
+                    transactions: vec![transaction],
                 },
                 body,
             )
@@ -60,16 +56,9 @@ impl SWQoSTrait for BloxClient {
     }
 
     async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
-        let versioned_txs = transactions
-            .into_iter()
-            .map(|tx| match tx {
-                Transaction::Legacy(tx) => VersionedTransaction::from(tx),
-                Transaction::Versioned(tx) => tx,
-            })
-            .collect::<Vec<_>>();
 
         let body = serde_json::json!({
-            "entries":  versioned_txs
+            "entries":  transactions
                 .iter()
                 .map(|tx| {
                     serde_json::json!({
@@ -87,7 +76,7 @@ impl SWQoSTrait for BloxClient {
                     name: self.get_name().to_string(),
                     url: format!("{}/api/v2/submit-batch", self.swqos_endpoint),
                     auth_header: self.swqos_header.clone(),
-                    transactions: versioned_txs,
+                    transactions,
                 },
                 body,
             )

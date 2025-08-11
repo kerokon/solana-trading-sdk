@@ -29,36 +29,25 @@ pub struct DefaultSWQoSClient {
 #[async_trait::async_trait]
 impl SWQoSTrait for DefaultSWQoSClient {
     async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
-        let versioned_tx = match transaction {
-            Transaction::Legacy(tx) => VersionedTransaction::from(tx),
-            Transaction::Versioned(tx) => tx,
-        };
 
         self.swqos_client
             .swqos_send_transaction(SWQoSRequest {
                 name: self.name.clone(),
                 url: self.swqos_endpoint.clone(),
                 auth_header: self.swqos_header.clone(),
-                transactions: vec![versioned_tx],
+                transactions: vec![transaction],
             })
             .await
     }
 
     async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
-        let versioned_txs = transactions
-            .into_iter()
-            .map(|tx| match tx {
-                Transaction::Legacy(tx) => VersionedTransaction::from(tx),
-                Transaction::Versioned(tx) => tx,
-            })
-            .collect();
 
         self.swqos_client
             .swqos_send_transactions(SWQoSRequest {
                 name: self.name.clone(),
                 url: self.swqos_endpoint.clone(),
                 auth_header: self.swqos_header.clone(),
-                transactions: versioned_txs,
+                transactions,
             })
             .await
     }

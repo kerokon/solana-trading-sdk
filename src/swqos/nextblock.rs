@@ -31,13 +31,7 @@ pub struct NextBlockClient {
 #[async_trait::async_trait]
 impl SWQoSTrait for NextBlockClient {
     async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
-        let versioned_tx = match transaction {
-            Transaction::Legacy(tx) => VersionedTransaction::from(tx),
-            Transaction::Versioned(tx) => tx,
-        };
-
-        let tx_bytes = bincode::serialize(&versioned_tx)?;
-        let tx_base64 = general_purpose::STANDARD.encode(tx_bytes);
+        let tx_base64 = transaction.to_base64_string();
         let body = serde_json::json!({
             "transaction": {
                 "content": tx_base64,
@@ -52,7 +46,7 @@ impl SWQoSTrait for NextBlockClient {
                     name: self.get_name().to_string(),
                     url: url.clone(),
                     auth_header: self.swqos_header.clone(),
-                    transactions: vec![versioned_tx],
+                    transactions: vec![transaction],
                 },
                 body,
             )
@@ -60,20 +54,13 @@ impl SWQoSTrait for NextBlockClient {
     }
 
     async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
-        let versioned_txs = transactions
-            .into_iter()
-            .map(|tx| match tx {
-                Transaction::Legacy(tx) => VersionedTransaction::from(tx),
-                Transaction::Versioned(tx) => tx,
-            })
-            .collect::<Vec<_>>();
 
         let body = serde_json::json!({
-            "entries":  versioned_txs
+            "entries":  transactions
                 .iter()
                 .map(|tx| {
-                    let tx_bytes = bincode::serialize(tx).unwrap();
-                    let tx_base64 = general_purpose::STANDARD.encode(tx_bytes);
+
+                    let tx_base64 = tx.to_base64_string();
                     serde_json::json!({
                         "transaction": {
                             "content": tx_base64,
@@ -90,7 +77,7 @@ impl SWQoSTrait for NextBlockClient {
                     name: self.get_name().to_string(),
                     url: url.clone(),
                     auth_header: self.swqos_header.clone(),
-                    transactions: versioned_txs,
+                    transactions,
                 },
                 body,
             )

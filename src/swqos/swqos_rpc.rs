@@ -2,6 +2,7 @@ use base64::{engine::general_purpose, Engine};
 use solana_sdk::transaction::VersionedTransaction;
 use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
+use crate::common::Transaction;
 
 pub const SWQOS_RPC_TIMEOUT: std::time::Duration = Duration::from_secs(10);
 
@@ -9,7 +10,7 @@ pub struct SWQoSRequest {
     pub name: String,
     pub url: String,
     pub auth_header: Option<(String, String)>,
-    pub transactions: Vec<VersionedTransaction>,
+    pub transactions: Vec<Transaction>,
 }
 
 pub trait FormatBase64VersionedTransaction {
@@ -22,7 +23,12 @@ impl FormatBase64VersionedTransaction for VersionedTransaction {
         general_purpose::STANDARD.encode(tx_bytes)
     }
 }
-
+impl FormatBase64VersionedTransaction for solana_sdk::transaction::Transaction {
+    fn to_base64_string(&self) -> String {
+        let tx_bytes = bincode::serialize(self).unwrap();
+        general_purpose::STANDARD.encode(tx_bytes)
+    }
+}
 #[async_trait::async_trait]
 pub trait SWQoSClientTrait {
     fn new_swqos_client() -> reqwest::Client {
@@ -36,11 +42,16 @@ pub trait SWQoSClientTrait {
 #[async_trait::async_trait]
 impl SWQoSClientTrait for reqwest::Client {
     async fn swqos_send_transaction(&self, request: SWQoSRequest) -> anyhow::Result<()> {
+        let base64_tx = match &request.transactions[0]{
+            Transaction::Legacy(t) => {t.to_base64_string()}
+            Transaction::Versioned(t) => {t.to_base64_string() }
+        };
+
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "sendTransaction",
             "params": [
-                request.transactions[0].to_base64_string(),
+                base64_tx,
                 { "encoding": "base64" }
             ],
             "id": 1,
@@ -50,7 +61,12 @@ impl SWQoSClientTrait for reqwest::Client {
     }
 
     async fn swqos_send_transactions(&self, request: SWQoSRequest) -> anyhow::Result<()> {
-        let txs_base64 = request.transactions.iter().map(|tx| tx.to_base64_string()).collect::<Vec<String>>();
+        let txs_base64:Vec<String> = request.transactions.iter().map(|tx| {
+            match &tx{
+                Transaction::Legacy(t) => {t.to_base64_string()}
+                Transaction::Versioned(t) => {t.to_base64_string() }
+            }
+        }).collect();
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "sendTransactions",
@@ -65,10 +81,14 @@ impl SWQoSClientTrait for reqwest::Client {
     }
 
     async fn swqos_json_post(&self, request: SWQoSRequest, body: serde_json::Value) -> anyhow::Result<()> {
+        let signature = match &request.transactions[0]{
+            Transaction::Legacy(t) => {t.signatures[0]}
+            Transaction::Versioned(t) => {t.signatures[0] }
+        };
         let txs_hash = request
             .transactions
             .iter()
-            .map(|tx| tx.signatures[0].to_string())
+            .map(|tx| signature.to_string())
             .collect::<Vec<_>>()
             .join(", ");
         let response = if let Some((key, value)) = request.auth_header {
