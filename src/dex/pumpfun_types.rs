@@ -9,10 +9,14 @@ pub const PUBKEY_GLOBAL_ACCOUNT: Pubkey = pubkey!("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe
 pub const PUBKEY_EVENT_AUTHORITY: Pubkey = pubkey!("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1");
 pub const PUBKEY_FEE_RECIPIENT: Pubkey = pubkey!("62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV");
 
+pub const PUBKEY_PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR: Pubkey = pubkey!("Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y");
+pub const PUBKEY_PUMPFUN_USER_VOLUME_ACCUMULATOR: Pubkey = pubkey!("8BWnAfvqm9BGtKCBk61Ern2eMT3SE192FDCVWTGibj1N");
+
 pub const GLOBAL_SEED: &[u8] = b"global";
 pub const MINT_AUTHORITY_SEED: &[u8] = b"mint-authority";
 pub const BONDING_CURVE_SEED: &[u8] = b"bonding-curve";
 pub const CREATOR_VAULT_SEED: &[u8] = b"creator-vault";
+pub const UVA_SEED: &[u8] = b"user_volume_accumulator";
 pub const METADATA_SEED: &[u8] = b"metadata";
 
 pub const INITIAL_VIRTUAL_TOKEN_RESERVES: u64 = 1_073_000_000_000_000;

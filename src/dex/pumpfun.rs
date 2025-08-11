@@ -99,6 +99,8 @@ impl DexTrait for Pumpfun {
                 AccountMeta::new_readonly(solana_program::sysvar::rent::ID, false),
                 AccountMeta::new_readonly(PUBKEY_EVENT_AUTHORITY, false),
                 AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
+                AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
+                AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
             ],
         );
 
@@ -136,6 +138,7 @@ impl DexTrait for Pumpfun {
         let buy_info: BuyInfo = buy.into();
         let buffer = buy_info.to_buffer()?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
+        let uva_pda = Self::get_uva_pda(mint)?;
 
         Ok(Instruction::new_with_bytes(
             PUBKEY_PUMPFUN,
@@ -153,6 +156,8 @@ impl DexTrait for Pumpfun {
                 AccountMeta::new(*creator_vault.ok_or(anyhow::anyhow!("Creator vault not provided"))?, false),
                 AccountMeta::new_readonly(PUBKEY_EVENT_AUTHORITY, false),
                 AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
+                AccountMeta::new(PUBKEY_PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR, false),
+                AccountMeta::new(uva_pda, false),
             ],
         ))
     }
@@ -163,6 +168,7 @@ impl DexTrait for Pumpfun {
         let sell_info: SellInfo = sell.into();
         let buffer = sell_info.to_buffer()?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
+        let uva_pda = Self::get_uva_pda(mint)?;
 
         Ok(Instruction::new_with_bytes(
             PUBKEY_PUMPFUN,
@@ -180,6 +186,8 @@ impl DexTrait for Pumpfun {
                 AccountMeta::new_readonly(spl_token::ID, false),
                 AccountMeta::new_readonly(PUBKEY_EVENT_AUTHORITY, false),
                 AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
+                AccountMeta::new(PUBKEY_PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR, false),
+                AccountMeta::new(uva_pda, false),
             ],
         ))
     }
@@ -202,6 +210,13 @@ impl Pumpfun {
 
     pub fn get_creator_vault_pda(creator: &Pubkey) -> anyhow::Result<Pubkey> {
         let seeds: &[&[u8]; 2] = &[CREATOR_VAULT_SEED, creator.as_ref()];
+        let program_id: &Pubkey = &PUBKEY_PUMPFUN;
+        let pda = Pubkey::try_find_program_address(seeds, program_id).ok_or_else(|| anyhow::anyhow!("Failed to find creator vault PDA"))?;
+        Ok(pda.0)
+    }
+
+    pub fn get_uva_pda(creator: &Pubkey) -> anyhow::Result<Pubkey> {
+        let seeds: &[&[u8]; 2] = &[UVA_SEED, creator.as_ref()];
         let program_id: &Pubkey = &PUBKEY_PUMPFUN;
         let pda = Pubkey::try_find_program_address(seeds, program_id).ok_or_else(|| anyhow::anyhow!("Failed to find creator vault PDA"))?;
         Ok(pda.0)
