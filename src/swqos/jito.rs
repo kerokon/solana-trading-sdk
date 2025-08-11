@@ -47,7 +47,8 @@ impl SWQoSTrait for JitoClient {
             Transaction::Legacy(tx) => VersionedTransaction::from(tx),
             Transaction::Versioned(tx) => tx,
         };
-
+        
+        
         self.swqos_client
             .swqos_send_transaction(SWQoSRequest {
                 name: self.get_name().to_string(),

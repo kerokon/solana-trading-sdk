@@ -29,6 +29,7 @@ pub enum SWQoSType {
 }
 
 #[async_trait::async_trait]
+
 pub trait SWQoSTrait: Send + Sync + Any {
     async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()>;
     async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()>;

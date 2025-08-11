@@ -49,9 +49,9 @@ pub trait DexTrait: Send + Sync + Any {
             CreateATA::Idempotent,
             fee,
             tip,
-        )
+        ).await
     }
-    fn buy_immediately(
+    async fn buy_immediately(
         &self,
         payer: &Keypair,
         mint: &Pubkey,
@@ -71,7 +71,7 @@ pub trait DexTrait: Send + Sync + Any {
         };
         let signatures = self
             .get_trading_endpoint()
-            .build_and_broadcast_tx(payer, instructions, blockhash, fee, tip, None)?;
+            .build_and_broadcast_tx(payer, instructions, blockhash, fee, tip, None).await?;
 
         Ok(signatures)
     }
@@ -105,9 +105,9 @@ pub trait DexTrait: Send + Sync + Any {
             blockhash,
             fee,
             tip,
-        )
+        ).await
     }
-    fn sell_immediately(
+    async fn sell_immediately(
         &self,
         payer: &Keypair,
         mint: &Pubkey,
@@ -127,7 +127,7 @@ pub trait DexTrait: Send + Sync + Any {
         };
         let signatures = self
             .get_trading_endpoint()
-            .build_and_broadcast_tx(payer, instructions, blockhash, fee, tip, None)?;
+            .build_and_broadcast_tx(payer, instructions, blockhash, fee, tip, None).await?;
 
         Ok(signatures)
     }

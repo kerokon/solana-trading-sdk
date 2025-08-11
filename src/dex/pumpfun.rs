@@ -124,7 +124,7 @@ impl DexTrait for Pumpfun {
 
         let signatures = self
             .endpoint
-            .build_and_broadcast_tx(&payer, instructions, blockhash, fee, tip, Some(vec![&create.mint_private_key]))?;
+            .build_and_broadcast_tx(&payer, instructions, blockhash, fee, tip, Some(vec![&create.mint_private_key])).await?;
 
         Ok(signatures)
     }
