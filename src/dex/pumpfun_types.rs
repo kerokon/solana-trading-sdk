@@ -16,7 +16,7 @@ pub const GLOBAL_SEED: &[u8] = b"global";
 pub const MINT_AUTHORITY_SEED: &[u8] = b"mint-authority";
 pub const BONDING_CURVE_SEED: &[u8] = b"bonding-curve";
 pub const CREATOR_VAULT_SEED: &[u8] = b"creator-vault";
-pub const UVA_SEED: &[u8] = b"user_volume_accumulator";
+pub const UVA_SEED: &[u8] = b"user-volume-accumulator";
 pub const METADATA_SEED: &[u8] = b"metadata";
 
 pub const INITIAL_VIRTUAL_TOKEN_RESERVES: u64 = 1_073_000_000_000_000;
