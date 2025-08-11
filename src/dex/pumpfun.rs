@@ -138,7 +138,7 @@ impl DexTrait for Pumpfun {
         let buy_info: BuyInfo = buy.into();
         let buffer = buy_info.to_buffer()?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
-        let uva_pda = Self::get_uva_pda(mint)?;
+        let uva_pda = Self::get_uva_pda(&payer.pubkey())?;
 
         Ok(Instruction::new_with_bytes(
             PUBKEY_PUMPFUN,
@@ -168,7 +168,7 @@ impl DexTrait for Pumpfun {
         let sell_info: SellInfo = sell.into();
         let buffer = sell_info.to_buffer()?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
-        let uva_pda = Self::get_uva_pda(mint)?;
+        let uva_pda = Self::get_uva_pda(&payer.pubkey())?;
 
         Ok(Instruction::new_with_bytes(
             PUBKEY_PUMPFUN,
@@ -215,8 +215,8 @@ impl Pumpfun {
         Ok(pda.0)
     }
 
-    pub fn get_uva_pda(creator: &Pubkey) -> anyhow::Result<Pubkey> {
-        let seeds: &[&[u8]; 2] = &[UVA_SEED, creator.as_ref()];
+    pub fn get_uva_pda(payer: &Pubkey) -> anyhow::Result<Pubkey> {
+        let seeds: &[&[u8]; 2] = &[UVA_SEED, payer.as_ref()];
         let program_id: &Pubkey = &PUBKEY_PUMPFUN;
         let pda = Pubkey::try_find_program_address(seeds, program_id).ok_or_else(|| anyhow::anyhow!("Failed to find creator vault PDA"))?;
         Ok(pda.0)
