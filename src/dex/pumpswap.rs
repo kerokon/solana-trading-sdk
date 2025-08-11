@@ -1,7 +1,7 @@
 use super::{
     dex_traits::DexTrait,
     pumpfun_common_types::{BuyInfo, SellInfo},
-    pumpfun_types::PUBKEY_PUMPFUN,
+    pumpfun_types::PUMPFUN_PROGRAM,
     pumpswap_types::*,
     types::{Create, SwapInfo},
 };
@@ -176,7 +176,7 @@ impl PumpSwap {
     }
 
     pub fn get_pool_authority_pda(mint: &Pubkey) -> anyhow::Result<Pubkey> {
-        let pda = Pubkey::try_find_program_address(&[b"pool-authority", mint.as_ref()], &PUBKEY_PUMPFUN)
+        let pda = Pubkey::try_find_program_address(&[b"pool-authority", mint.as_ref()], &PUMPFUN_PROGRAM)
             .ok_or_else(|| anyhow::anyhow!("Failed to find pool authority PDA"))?;
         Ok(pda.0)
     }

@@ -17,6 +17,7 @@ use solana_sdk::{
 };
 use spl_associated_token_account::{get_associated_token_address, instruction::create_associated_token_account};
 use std::sync::Arc;
+use serde::de::Unexpected::UnitVariant;
 
 pub struct Pumpfun {
     pub endpoint: Arc<TradingEndpoint>,
@@ -82,7 +83,7 @@ impl DexTrait for Pumpfun {
 
         let mut instructions = vec![];
         let create_instruction = Instruction::new_with_bytes(
-            PUBKEY_PUMPFUN,
+            PUMPFUN_PROGRAM,
             &buffer,
             vec![
                 AccountMeta::new(mint, true),
@@ -98,9 +99,9 @@ impl DexTrait for Pumpfun {
                 AccountMeta::new_readonly(spl_associated_token_account::ID, false),
                 AccountMeta::new_readonly(solana_program::sysvar::rent::ID, false),
                 AccountMeta::new_readonly(PUBKEY_EVENT_AUTHORITY, false),
-                AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
-                AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
-                AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
+                AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
+                AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
+                AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
             ],
         );
 
@@ -138,10 +139,10 @@ impl DexTrait for Pumpfun {
         let buy_info: BuyInfo = buy.into();
         let buffer = buy_info.to_buffer()?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
-        let uva_pda = Self::get_uva_pda(&payer.pubkey())?;
+
 
         Ok(Instruction::new_with_bytes(
-            PUBKEY_PUMPFUN,
+            PUMPFUN_PROGRAM,
             &buffer,
             vec![
                 AccountMeta::new_readonly(PUBKEY_GLOBAL_ACCOUNT, false),
@@ -155,9 +156,9 @@ impl DexTrait for Pumpfun {
                 AccountMeta::new_readonly(spl_token::ID, false),
                 AccountMeta::new(*creator_vault.ok_or(anyhow::anyhow!("Creator vault not provided"))?, false),
                 AccountMeta::new_readonly(PUBKEY_EVENT_AUTHORITY, false),
-                AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
-                AccountMeta::new(PUBKEY_PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR, false),
-                AccountMeta::new(uva_pda, false),
+                AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
+                AccountMeta::new(Self::get_global_volume_accumulator_pda().unwrap(), false),
+                AccountMeta::new(Self::get_user_volume_accumulator_pda(&payer.pubkey()).unwrap(), false),
             ],
         ))
     }
@@ -168,10 +169,10 @@ impl DexTrait for Pumpfun {
         let sell_info: SellInfo = sell.into();
         let buffer = sell_info.to_buffer()?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
-        let uva_pda = Self::get_uva_pda(&payer.pubkey())?;
+
 
         Ok(Instruction::new_with_bytes(
-            PUBKEY_PUMPFUN,
+            PUMPFUN_PROGRAM,
             &buffer,
             vec![
                 AccountMeta::new_readonly(PUBKEY_GLOBAL_ACCOUNT, false),
@@ -185,9 +186,9 @@ impl DexTrait for Pumpfun {
                 AccountMeta::new(*creator_vault.ok_or(anyhow::anyhow!("Creator vault not provided"))?, false),
                 AccountMeta::new_readonly(spl_token::ID, false),
                 AccountMeta::new_readonly(PUBKEY_EVENT_AUTHORITY, false),
-                AccountMeta::new_readonly(PUBKEY_PUMPFUN, false),
-                AccountMeta::new(PUBKEY_PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR, false),
-                AccountMeta::new(uva_pda, false),
+                AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
+                AccountMeta::new(Self::get_global_volume_accumulator_pda().unwrap(), false),
+                AccountMeta::new(Self::get_user_volume_accumulator_pda(&payer.pubkey()).unwrap(), false),
             ],
         ))
     }
@@ -203,22 +204,32 @@ impl Pumpfun {
 
     pub fn get_bonding_curve_pda(mint: &Pubkey) -> anyhow::Result<Pubkey> {
         let seeds: &[&[u8]; 2] = &[BONDING_CURVE_SEED, mint.as_ref()];
-        let program_id: &Pubkey = &PUBKEY_PUMPFUN;
+        let program_id: &Pubkey = &PUMPFUN_PROGRAM;
         let pda = Pubkey::try_find_program_address(seeds, program_id).ok_or_else(|| anyhow::anyhow!("Failed to find bonding curve PDA"))?;
         Ok(pda.0)
     }
 
     pub fn get_creator_vault_pda(creator: &Pubkey) -> anyhow::Result<Pubkey> {
         let seeds: &[&[u8]; 2] = &[CREATOR_VAULT_SEED, creator.as_ref()];
-        let program_id: &Pubkey = &PUBKEY_PUMPFUN;
+        let program_id: &Pubkey = &PUMPFUN_PROGRAM;
         let pda = Pubkey::try_find_program_address(seeds, program_id).ok_or_else(|| anyhow::anyhow!("Failed to find creator vault PDA"))?;
         Ok(pda.0)
     }
 
-    pub fn get_uva_pda(payer: &Pubkey) -> anyhow::Result<Pubkey> {
-        let seeds: &[&[u8]; 2] = &[UVA_SEED, payer.as_ref()];
-        let program_id: &Pubkey = &PUBKEY_PUMPFUN;
-        let pda = Pubkey::try_find_program_address(seeds, program_id).ok_or_else(|| anyhow::anyhow!("Failed to find creator vault PDA"))?;
-        Ok(pda.0)
+    pub fn get_user_volume_accumulator_pda(user: &Pubkey) -> Option<Pubkey> {
+        let seeds: &[&[u8]; 2] = &[
+            &USER_VOLUME_ACCUMULATOR_SEED,
+            user.as_ref(),
+        ];
+        let program_id: &Pubkey = &AMM_PROGRAM;
+        let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
+        pda.map(|pubkey| pubkey.0)
+    }
+
+    pub fn get_global_volume_accumulator_pda() -> Option<Pubkey> {
+        let seeds: &[&[u8]; 1] = &[&GLOBAL_VOLUME_ACCUMULATOR_SEED];
+        let program_id: &Pubkey = &AMM_PROGRAM;
+        let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
+        pda.map(|pubkey| pubkey.0)
     }
 }
