@@ -1,4 +1,3 @@
-use anyhow::Ok;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{native_token::sol_str_to_lamports, pubkey::Pubkey, signature::Keypair};
 use solana_trading_sdk::{
@@ -8,6 +7,7 @@ use solana_trading_sdk::{
         pumpfun::Pumpfun,
         types::{Create, DexType},
     },
+    errors::trading_endpoint_error::TradingEndpointError,
     instruction::builder::PriorityFee,
     ipfs::{metadata::create_token_metadata, types::CreateTokenMetadata},
     swqos::{
@@ -20,7 +20,7 @@ use std::{str::FromStr, sync::Arc};
 const RPC_ENDPOINT: &str = "https://solana-rpc.publicnode.com";
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), TradingEndpointError> {
     Ok(())
 }
 
@@ -29,15 +29,14 @@ pub fn get_solana_client() -> Arc<RpcClient> {
 }
 
 pub fn get_swqos_client() -> DefaultSWQoSClient {
-
     let swqos_client = DefaultSWQoSClient::new("default", get_solana_client(), RPC_ENDPOINT.to_string(), None, vec![]);
     swqos_client
 }
 
-pub async fn transfer_sol() -> anyhow::Result<()> {
+pub async fn transfer_sol() -> Result<(), TradingEndpointError> {
     let rpc_url = "https://solana-rpc.publicnode.com".to_string();
     let from = Keypair::from_base58_string("your_payer_pubkey");
-    let to = Pubkey::from_str("recipient_pubkey")?;
+    let to = Pubkey::from_str("recipient_pubkey").unwrap();
     let amount = sol_str_to_lamports("0.1").unwrap();
     let fee = PriorityFee {
         unit_limit: 100000,
@@ -48,10 +47,10 @@ pub async fn transfer_sol() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn transfer_token() -> anyhow::Result<()> {
+pub async fn transfer_token() -> Result<(), TradingEndpointError> {
     let from = Keypair::from_base58_string("your_payer_pubkey");
-    let to = Pubkey::from_str("recipient_pubkey")?;
-    let mint = Pubkey::from_str("token_mint_pubkey")?;
+    let to = Pubkey::from_str("recipient_pubkey").unwrap();
+    let mint = Pubkey::from_str("token_mint_pubkey").unwrap();
     let amount = 1000;
     let fee = PriorityFee {
         unit_limit: 100000,
@@ -62,7 +61,7 @@ pub async fn transfer_token() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn get_trading_client() -> anyhow::Result<TradingClient> {
+pub async fn get_trading_client() -> Result<TradingClient, TradingEndpointError> {
     let rpc_url = "https://solana-rpc.publicnode.com".to_string();
     let client = TradingClient::new(TradingConfig {
         rpc_url: rpc_url.to_string(),
@@ -74,16 +73,17 @@ pub async fn get_trading_client() -> anyhow::Result<TradingClient> {
             SWQoSType::ZeroSlot(ZEROSLOT_ENDPOINT_FRA.to_string(), "your_api_key".to_string()),
             SWQoSType::Temporal(TEMPORAL_ENDPOINT_FRA.to_string(), "your_api_key".to_string()),
         ],
-    })?;
+    })
+    .map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
 
     client.initialize().await?;
     Ok(client)
 }
 
-pub async fn swap() -> anyhow::Result<()> {
+pub async fn swap() -> Result<(), TradingEndpointError> {
     let client = get_trading_client().await?;
     let payer = Keypair::from_base58_string("your_payer_pubkey");
-    let mint = Pubkey::from_str("token_mint_pubkey")?;
+    let mint = Pubkey::from_str("token_mint_pubkey").unwrap();
     let sol_amount = sol_str_to_lamports("1.0").unwrap();
     let slippage_basis_points = 3000; // 30%
     let fee = PriorityFee {
@@ -103,7 +103,7 @@ pub async fn swap() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn create() -> anyhow::Result<()> {
+pub async fn create() -> Result<(), TradingEndpointError> {
     let jwt_token = "jpinata.cloud jwt_token";
     let token_info = CreateTokenMetadata {
         name: "TokenName".to_string(),
@@ -115,7 +115,9 @@ pub async fn create() -> anyhow::Result<()> {
         website: Some("https://example.com".to_string()),
         metadata_uri: None,
     };
-    let metadata = create_token_metadata(token_info, jwt_token).await?;
+    let metadata = create_token_metadata(token_info, jwt_token)
+        .await
+        .map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
 
     let swqos_client = get_swqos_client();
     let trading_endpoint = TradingEndpoint::new(get_solana_client(), vec![Arc::new(swqos_client)]);

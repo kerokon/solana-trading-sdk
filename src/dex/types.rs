@@ -4,6 +4,7 @@ use crate::{
     dex::{believe, boopfun, raydium_bonk},
 };
 use serde::{Deserialize, Serialize};
+use solana_client::client_error::ClientError;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{pubkey::Pubkey, signature::Keypair};
 use spl_associated_token_account::get_associated_token_address;
@@ -63,12 +64,12 @@ pub enum TokenAmountType {
 }
 
 impl TokenAmountType {
-    pub async fn to_amount(&self, rpc: Arc<RpcClient>, payer: &Pubkey, mint: &Pubkey) -> anyhow::Result<u64> {
+    pub async fn to_amount(&self, rpc: Arc<RpcClient>, payer: &Pubkey, mint: &Pubkey) -> Result<u64, ClientError> {
         match self {
             TokenAmountType::Percent(percent) => {
                 let ata = get_associated_token_address(payer, mint);
                 let balance = rpc.get_token_account_balance(&ata).await?;
-                let balance_u64 = balance.amount.parse::<u64>()?;
+                let balance_u64 = balance.amount.parse::<u64>().unwrap_or(0);
                 Ok((balance_u64 * percent) / 100)
             }
             TokenAmountType::Amount(amount) => Ok(*amount),
@@ -80,6 +81,7 @@ pub enum CreateATA {
     Create,
     None,
     Idempotent,
+    CreateWithSeed(String),
 }
 
 pub struct BatchBuyParam {
@@ -91,4 +93,5 @@ pub struct BatchSellParam {
     pub payer: Keypair,
     pub token_amount: u64,
     pub close_mint_ata: bool,
+    pub custom_ata: Option<Pubkey>,
 }

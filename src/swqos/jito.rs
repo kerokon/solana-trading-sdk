@@ -2,10 +2,10 @@ use super::{
     swqos_rpc::{SWQoSClientTrait, SWQoSRequest},
     SWQoSTrait,
 };
-use crate::{common::transaction::Transaction, swqos::swqos_rpc::FormatBase64VersionedTransaction};
+use crate::{common::transaction::Transaction, errors::swqos_error::SWQoSError};
 use rand::seq::IndexedRandom;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{pubkey, pubkey::Pubkey, transaction::VersionedTransaction};
+use solana_sdk::{pubkey, pubkey::Pubkey};
 use std::sync::Arc;
 
 pub const JITO_TIP_ACCOUNTS: &[Pubkey] = &[
@@ -42,9 +42,7 @@ pub struct JitoClient {
 
 #[async_trait::async_trait]
 impl SWQoSTrait for JitoClient {
-    async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
-
-
+    async fn send_transaction(&self, transaction: Transaction) -> Result<(), SWQoSError> {
         self.swqos_client
             .swqos_send_transaction(SWQoSRequest {
                 name: self.get_name().to_string(),
@@ -55,8 +53,7 @@ impl SWQoSTrait for JitoClient {
             .await
     }
 
-    async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
-
+    async fn send_transactions(&self, transactions: Vec<Transaction>) -> Result<(), SWQoSError> {
         let txs_base64 = transactions.iter().map(|tx| tx.to_base64_string()).collect::<Vec<String>>();
         let body = serde_json::json!({
             "jsonrpc": "2.0",

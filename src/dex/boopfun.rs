@@ -2,6 +2,7 @@ use super::{boopfun_types::*, dex_traits::DexTrait, types::Create};
 use crate::{
     common::{accounts::PUBKEY_WSOL, trading_endpoint::TradingEndpoint},
     dex::types::{PoolInfo, SwapInfo},
+    errors::trading_endpoint_error::TradingEndpointError,
     instruction::builder::PriorityFee,
 };
 use solana_sdk::{
@@ -19,11 +20,11 @@ pub struct Boopfun {
 
 #[async_trait::async_trait]
 impl DexTrait for Boopfun {
-    async fn initialize(&self) -> anyhow::Result<()> {
+    async fn initialize(&self) -> Result<(), TradingEndpointError> {
         Ok(())
     }
 
-    fn initialized(&self) -> anyhow::Result<()> {
+    fn initialized(&self) -> Result<(), TradingEndpointError> {
         Ok(())
     }
 
@@ -35,14 +36,14 @@ impl DexTrait for Boopfun {
         false
     }
 
-    async fn get_pool(&self, mint: &Pubkey) -> anyhow::Result<PoolInfo> {
+    async fn get_pool(&self, mint: &Pubkey) -> Result<PoolInfo, TradingEndpointError> {
         let pool = Self::get_bonding_curve_pda(mint)?;
         let account = self.endpoint.rpc.get_account(&pool).await?;
         if account.data.is_empty() {
-            return Err(anyhow::anyhow!("Bonding curve not found: {}", mint.to_string()));
+            return Err(TradingEndpointError::CustomError(format!("Bonding curve not found: {}", mint.to_string())));
         }
 
-        let bonding_curve = bincode::deserialize::<BondingCurveAccount>(&account.data)?;
+        let bonding_curve = bincode::deserialize::<BondingCurveAccount>(&account.data).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
 
         Ok(PoolInfo {
             pool,
@@ -54,15 +55,22 @@ impl DexTrait for Boopfun {
         })
     }
 
-    async fn create(&self, _: Keypair, _: Create, _: Option<PriorityFee>, _: Option<u64>) -> anyhow::Result<Vec<Signature>> {
-        Err(anyhow::anyhow!("Not supported"))
+    async fn create(&self, _: Keypair, _: Create, _: Option<PriorityFee>, _: Option<u64>) -> Result<Vec<Signature>, TradingEndpointError> {
+        Err(TradingEndpointError::CustomError("Not supported".to_string()))
     }
 
-    fn build_buy_instruction(&self, payer: &Keypair, mint: &Pubkey, _: Option<&Pubkey>, buy: SwapInfo) -> anyhow::Result<Instruction> {
+    fn build_buy_instruction(
+        &self,
+        _payer: &Keypair,
+        mint: &Pubkey,
+        _: Option<&Pubkey>,
+        _token_program_account: &Pubkey,
+        buy: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError> {
         self.initialized()?;
 
         let buy_info: BuyInfo = buy.into();
-        let buffer = buy_info.to_buffer()?;
+        let buffer = buy_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
         let bonding_curve_vault = Self::get_bonding_curve_vault(mint)?;
         let bonding_curve_sol_vault = Self::get_bonding_curve_sol_vault(mint)?;
@@ -77,8 +85,8 @@ impl DexTrait for Boopfun {
                 AccountMeta::new(trading_fee_vault, false),
                 AccountMeta::new(bonding_curve_vault, false),
                 AccountMeta::new(bonding_curve_sol_vault, false),
-                AccountMeta::new(get_associated_token_address(&payer.pubkey(), mint), false),
-                AccountMeta::new(payer.pubkey(), true),
+                AccountMeta::new(get_associated_token_address(&_payer.pubkey(), mint), false),
+                AccountMeta::new(_payer.pubkey(), true),
                 AccountMeta::new_readonly(PUBKEY_BOOPFUN_CONFIG, false),
                 AccountMeta::new_readonly(PUBKEY_BOOPFUN_VAULT_AUTHORITY, false),
                 AccountMeta::new_readonly(PUBKEY_WSOL, false),
@@ -89,11 +97,23 @@ impl DexTrait for Boopfun {
         ))
     }
 
-    fn build_sell_instruction(&self, payer: &Keypair, mint: &Pubkey, _: Option<&Pubkey>, sell: SwapInfo) -> anyhow::Result<Instruction> {
+    fn build_sell_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        custom_ata: Option<&Pubkey>,
+        _: Option<&Pubkey>,
+        sell: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError> {
         self.initialized()?;
 
+        let ata = match custom_ata {
+            None => get_associated_token_address(&payer.pubkey(), mint),
+            Some(t) => *t,
+        };
+
         let sell_info: SellInfo = sell.into();
-        let buffer = sell_info.to_buffer()?;
+        let buffer = sell_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
         let bonding_curve_vault = Self::get_bonding_curve_vault(mint)?;
         let bonding_curve_sol_vault = Self::get_bonding_curve_sol_vault(mint)?;
@@ -108,7 +128,7 @@ impl DexTrait for Boopfun {
                 AccountMeta::new(trading_fee_vault, false),
                 AccountMeta::new(bonding_curve_vault, false),
                 AccountMeta::new(bonding_curve_sol_vault, false),
-                AccountMeta::new(get_associated_token_address(&payer.pubkey(), mint), false),
+                AccountMeta::new(ata, false),
                 AccountMeta::new(payer.pubkey(), true),
                 AccountMeta::new(payer.pubkey(), true),
                 AccountMeta::new_readonly(PUBKEY_BOOPFUN_CONFIG, false),
@@ -125,27 +145,31 @@ impl Boopfun {
         Self { endpoint }
     }
 
-    pub fn get_bonding_curve_pda(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_bonding_curve_pda(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let seeds: &[&[u8]; 2] = &[BONDING_CURVE_SEED, mint.as_ref()];
-        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_BOOPFUN).ok_or_else(|| anyhow::anyhow!("Failed to find bonding curve PDA"))?;
+        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_BOOPFUN)
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find bonding curve PDA".to_string()))?;
         Ok(pda.0)
     }
 
-    pub fn get_bonding_curve_vault(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_bonding_curve_vault(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let seeds: &[&[u8]; 2] = &[BONDING_CURVE_VAULT_SEED, mint.as_ref()];
-        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_BOOPFUN).ok_or_else(|| anyhow::anyhow!("Failed to find bonding curve vault PDA"))?;
+        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_BOOPFUN)
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find bonding curve vault PDA".to_string()))?;
         Ok(pda.0)
     }
 
-    pub fn get_bonding_curve_sol_vault(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_bonding_curve_sol_vault(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let seeds: &[&[u8]; 2] = &[BONDING_CURVE_SOL_VAULT_SEED, mint.as_ref()];
-        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_BOOPFUN).ok_or_else(|| anyhow::anyhow!("Failed to find bonding curve sol vault PDA"))?;
+        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_BOOPFUN)
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find bonding curve sol vault PDA".to_string()))?;
         Ok(pda.0)
     }
 
-    pub fn get_trading_fee_vault(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_trading_fee_vault(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let seeds: &[&[u8]; 2] = &[TRADING_FEE_VAULT_SEED, mint.as_ref()];
-        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_BOOPFUN).ok_or_else(|| anyhow::anyhow!("Failed to find trading fee vault PDA"))?;
+        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_BOOPFUN)
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find trading fee vault PDA".to_string()))?;
         Ok(pda.0)
     }
 }

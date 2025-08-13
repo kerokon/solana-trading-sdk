@@ -2,6 +2,7 @@ use super::{dex_traits::DexTrait, moonit_types::*, types::Create};
 use crate::{
     common::trading_endpoint::TradingEndpoint,
     dex::types::{PoolInfo, SwapInfo},
+    errors::trading_endpoint_error::TradingEndpointError,
     instruction::builder::PriorityFee,
 };
 use borsh::BorshDeserialize;
@@ -20,11 +21,11 @@ pub struct Moonit {
 
 #[async_trait::async_trait]
 impl DexTrait for Moonit {
-    async fn initialize(&self) -> anyhow::Result<()> {
+    async fn initialize(&self) -> Result<(), TradingEndpointError> {
         Ok(())
     }
 
-    fn initialized(&self) -> anyhow::Result<()> {
+    fn initialized(&self) -> Result<(), TradingEndpointError> {
         Ok(())
     }
 
@@ -36,14 +37,14 @@ impl DexTrait for Moonit {
         false
     }
 
-    async fn get_pool(&self, mint: &Pubkey) -> anyhow::Result<PoolInfo> {
-        let bonding_curve_pda = Self::get_bonding_curve_pda(mint).unwrap();
+    async fn get_pool(&self, mint: &Pubkey) -> Result<PoolInfo, TradingEndpointError> {
+        let bonding_curve_pda = Self::get_bonding_curve_pda(mint)?;
         let account = self.endpoint.rpc.get_account(&bonding_curve_pda).await?;
         if account.data.is_empty() {
-            return Err(anyhow::anyhow!("Bonding curve not found: {}", mint.to_string()));
+            return Err(TradingEndpointError::CustomError(format!("Bonding curve not found: {}", mint.to_string())));
         }
 
-        let bonding_curve = CurveAccount::deserialize(&mut account.data.as_slice())?;
+        let bonding_curve = CurveAccount::deserialize(&mut account.data.as_slice()).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
 
         Ok(PoolInfo {
             pool: bonding_curve_pda,
@@ -55,11 +56,18 @@ impl DexTrait for Moonit {
         })
     }
 
-    async fn create(&self, _: Keypair, _: Create, _: Option<PriorityFee>, _: Option<u64>) -> anyhow::Result<Vec<Signature>> {
-        Err(anyhow::anyhow!("Not supported"))
+    async fn create(&self, _: Keypair, _: Create, _: Option<PriorityFee>, _: Option<u64>) -> Result<Vec<Signature>, TradingEndpointError> {
+        Err(TradingEndpointError::CustomError("Not supported".to_string()))
     }
 
-    fn build_buy_instruction(&self, payer: &Keypair, mint: &Pubkey, _: Option<&Pubkey>, buy: SwapInfo) -> anyhow::Result<Instruction> {
+    fn build_buy_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        _: Option<&Pubkey>,
+        token_program_account: &Pubkey,
+        buy: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError> {
         self.initialized()?;
 
         let trade_info: TradeParams = TradeParams {
@@ -70,7 +78,7 @@ impl DexTrait for Moonit {
             slippage_bps: 0,
         };
 
-        let buffer = trade_info.to_buffer()?;
+        let buffer = trade_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
 
         Ok(Instruction::new_with_bytes(
@@ -85,14 +93,21 @@ impl DexTrait for Moonit {
                 AccountMeta::new(PUBKEY_MOONIT_HELIO_FEE, false),
                 AccountMeta::new_readonly(*mint, false),
                 AccountMeta::new_readonly(PUBKEY_MOONIT_CONFIG, false),
-                AccountMeta::new_readonly(spl_token::ID, false),
+                AccountMeta::new_readonly(*token_program_account, false),
                 AccountMeta::new_readonly(spl_associated_token_account::ID, false),
                 AccountMeta::new_readonly(solana_program::system_program::ID, false),
             ],
         ))
     }
 
-    fn build_sell_instruction(&self, payer: &Keypair, mint: &Pubkey, _: Option<&Pubkey>, sell: SwapInfo) -> anyhow::Result<Instruction> {
+    fn build_sell_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        custom_ata: Option<&Pubkey>,
+        _: Option<&Pubkey>,
+        sell: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError> {
         self.initialized()?;
 
         let trade_info: TradeParams = TradeParams {
@@ -103,15 +118,20 @@ impl DexTrait for Moonit {
             slippage_bps: 0,
         };
 
-        let buffer = trade_info.to_buffer()?;
+        let buffer = trade_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
+
+        let ata = match custom_ata {
+            None => get_associated_token_address(&payer.pubkey(), mint),
+            Some(t) => *t,
+        };
 
         Ok(Instruction::new_with_bytes(
             PUBKEY_MOONIT,
             &buffer,
             vec![
                 AccountMeta::new(payer.pubkey(), true),
-                AccountMeta::new(get_associated_token_address(&payer.pubkey(), mint), false),
+                AccountMeta::new(ata, false),
                 AccountMeta::new(bonding_curve, false),
                 AccountMeta::new(get_associated_token_address(&bonding_curve, mint), false),
                 AccountMeta::new(PUBKEY_MOONIT_DEX_FEE, false),
@@ -131,9 +151,10 @@ impl Moonit {
         Self { endpoint }
     }
 
-    pub fn get_bonding_curve_pda(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_bonding_curve_pda(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let seeds: &[&[u8]; 2] = &[BONDING_CURVE_SEED, mint.as_ref()];
-        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_MOONIT).ok_or_else(|| anyhow::anyhow!("Failed to find bonding curve PDA"))?;
+        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_MOONIT)
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find bonding curve PDA".to_string()))?;
         Ok(pda.0)
     }
 }

@@ -1,5 +1,10 @@
-use crate::{common::{accounts::PUBKEY_WSOL, transaction::Transaction}, dex::types::CreateATA};
+use crate::{
+    common::{accounts::PUBKEY_WSOL, transaction::Transaction},
+    dex::types::CreateATA,
+};
 use serde::{Deserialize, Serialize};
+use solana_program::program_pack::Pack;
+use solana_program::system_instruction;
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     hash::Hash,
@@ -14,7 +19,7 @@ use spl_associated_token_account::{
     get_associated_token_address,
     instruction::{create_associated_token_account, create_associated_token_account_idempotent},
 };
-use spl_token::instruction::{close_account, sync_native};
+use spl_token::instruction::{close_account, initialize_account3, sync_native};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PriorityFee {
@@ -74,12 +79,13 @@ pub fn build_legacy_transaction(
     Ok(Transaction::Legacy(transaction))
 }
 
-pub fn build_sol_buy_instructions(payer: &Keypair, mint: &Pubkey, buy_instruction: Instruction, crate_ata: CreateATA) -> anyhow::Result<Vec<Instruction>> {
+pub fn build_token_account_instructions(payer: &Keypair, mint: &Pubkey, crate_ata: CreateATA) -> anyhow::Result<(Pubkey, Vec<Instruction>)> {
     let mut instructions = vec![];
 
-    match crate_ata {
+    let (token_program, instructions) = match crate_ata {
         CreateATA::Create => {
             instructions.push(create_associated_token_account(&payer.pubkey(), &payer.pubkey(), &mint, &spl_token::ID));
+            (get_associated_token_address(&payer.pubkey(), mint), instructions)
         }
         CreateATA::Idempotent => {
             instructions.push(create_associated_token_account_idempotent(
@@ -88,13 +94,17 @@ pub fn build_sol_buy_instructions(payer: &Keypair, mint: &Pubkey, buy_instructio
                 &mint,
                 &spl_token::ID,
             ));
+            (get_associated_token_address(&payer.pubkey(), mint), instructions)
         }
-        CreateATA::None => {}
-    }
+        CreateATA::None => (get_associated_token_address(&payer.pubkey(), mint), vec![]),
+        CreateATA::CreateWithSeed(seed) => {
+            let (token_program, ixs) = build_seeded_token_address(&payer.pubkey(), &mint, &seed)?;
+            instructions.extend_from_slice(&ixs);
+            (token_program, ixs)
+        }
+    };
 
-    instructions.push(buy_instruction);
-
-    Ok(instructions)
+    Ok((token_program, instructions))
 }
 
 pub fn build_sol_sell_instructions(
@@ -135,6 +145,10 @@ pub fn build_wsol_buy_instructions(
             ));
         }
         CreateATA::None => {}
+        CreateATA::CreateWithSeed(seed) => {
+            let (_, ixs) = build_seeded_token_address(&payer.pubkey(), &mint, &seed)?;
+            instructions.extend_from_slice(&ixs);
+        }
     }
 
     instructions.push(create_associated_token_account_idempotent(
@@ -177,4 +191,37 @@ pub fn build_wsol_sell_instructions(payer: &Keypair, mint: &Pubkey, sell_instruc
     }
 
     Ok(instructions)
+}
+
+fn build_seeded_token_address(payer: &Pubkey, mint: &Pubkey, seed: &str) -> anyhow::Result<(Pubkey, Vec<Instruction>)> {
+    let base = payer;
+    let token_program_id = spl_token::id();
+
+    // 1. Derive the token account address (on-curve)
+    let token_account = Pubkey::create_with_seed(&base, seed, &token_program_id)?;
+
+    // 2. Calculate space & rent (works on-chain; for off-chain, hardcode)
+    let account_size = spl_token::state::Account::LEN;
+    let lamports = 2_139_280;
+
+    // 3. Create account with seed
+    let ix_create = system_instruction::create_account_with_seed(
+        payer,          // from (funder)
+        &token_account, // to (new account)
+        base,           // base
+        seed,
+        lamports,
+        account_size as u64,
+        &token_program_id,
+    );
+
+    // 4. Init SPL Token account
+    let ix_init = initialize_account3(
+        &token_program_id,
+        &token_account,
+        mint,
+        payer, // owner of token account
+    )?;
+
+    Ok((token_account, vec![ix_create, ix_init]))
 }

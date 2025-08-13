@@ -4,7 +4,8 @@ use super::{
 };
 use crate::{
     common::trading_endpoint::{BatchTxItem, TradingEndpoint},
-    instruction::builder::{build_sol_buy_instructions, build_sol_sell_instructions, build_wsol_buy_instructions, build_wsol_sell_instructions, PriorityFee},
+    errors::trading_endpoint_error::TradingEndpointError,
+    instruction::builder::{build_sol_sell_instructions, build_token_account_instructions, build_wsol_sell_instructions, PriorityFee},
 };
 use solana_sdk::{
     hash::Hash,
@@ -17,14 +18,28 @@ use std::{any::Any, sync::Arc};
 
 #[async_trait::async_trait]
 pub trait DexTrait: Send + Sync + Any {
-    async fn initialize(&self) -> anyhow::Result<()>;
-    fn initialized(&self) -> anyhow::Result<()>;
+    async fn initialize(&self) -> Result<(), TradingEndpointError>;
+    fn initialized(&self) -> Result<(), TradingEndpointError>;
     fn use_wsol(&self) -> bool;
     fn get_trading_endpoint(&self) -> Arc<TradingEndpoint>;
-    async fn get_pool(&self, mint: &Pubkey) -> anyhow::Result<PoolInfo>;
-    async fn create(&self, payer: Keypair, create: Create, fee: Option<PriorityFee>, tip: Option<u64>) -> anyhow::Result<Vec<Signature>>;
-    fn build_buy_instruction(&self, payer: &Keypair, mint: &Pubkey, creator_vault: Option<&Pubkey>, buy: SwapInfo) -> anyhow::Result<Instruction>;
-    fn build_sell_instruction(&self, payer: &Keypair, mint: &Pubkey, creator_vault: Option<&Pubkey>, sell: SwapInfo) -> anyhow::Result<Instruction>;
+    async fn get_pool(&self, mint: &Pubkey) -> Result<PoolInfo, TradingEndpointError>;
+    async fn create(&self, payer: Keypair, create: Create, fee: Option<PriorityFee>, tip: Option<u64>) -> Result<Vec<Signature>, TradingEndpointError>;
+    fn build_buy_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        creator_vault: Option<&Pubkey>,
+        token_program_account: &Pubkey,
+        buy: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError>;
+    fn build_sell_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        custom_ata: Option<&Pubkey>,
+        creator_vault: Option<&Pubkey>,
+        sell: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError>;
     async fn buy(
         &self,
         payer: &Keypair,
@@ -33,7 +48,7 @@ pub trait DexTrait: Send + Sync + Any {
         slippage_basis_points: u64,
         fee: Option<PriorityFee>,
         tip: Option<u64>,
-    ) -> anyhow::Result<Vec<Signature>> {
+    ) -> Result<Vec<Signature>, TradingEndpointError> {
         let trading_endpoint = self.get_trading_endpoint();
         let (pool_info, blockhash) = tokio::try_join!(self.get_pool(mint), trading_endpoint.get_latest_blockhash(),)?;
         let buy_token_amount = amm_buy_get_token_out(pool_info.sol_reserves, pool_info.token_reserves, sol_amount);
@@ -46,10 +61,11 @@ pub trait DexTrait: Send + Sync + Any {
             sol_lamports_with_slippage,
             buy_token_amount,
             blockhash,
-            CreateATA::Idempotent,
+            CreateATA::Create,
             fee,
             tip,
-        ).await
+        )
+        .await
     }
     async fn buy_immediately(
         &self,
@@ -62,16 +78,16 @@ pub trait DexTrait: Send + Sync + Any {
         create_ata: CreateATA,
         fee: Option<PriorityFee>,
         tip: Option<u64>,
-    ) -> anyhow::Result<Vec<Signature>> {
-        let instruction = self.build_buy_instruction(payer, mint, extra_address, SwapInfo { token_amount, sol_amount })?;
-        let instructions = if self.use_wsol() {
-            build_wsol_buy_instructions(payer, mint, sol_amount, instruction, create_ata)?
-        } else {
-            build_sol_buy_instructions(payer, mint, instruction, create_ata)?
-        };
+    ) -> Result<Vec<Signature>, TradingEndpointError> {
+        let (token_account, mut instructions) =
+            build_token_account_instructions(payer, mint, create_ata).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
+
+        let instruction = self.build_buy_instruction(payer, mint, extra_address, &token_account, SwapInfo { token_amount, sol_amount })?;
+        instructions.push(instruction);
         let signatures = self
             .get_trading_endpoint()
-            .build_and_broadcast_tx(payer, instructions, blockhash, fee, tip, None).await?;
+            .build_and_broadcast_tx(payer, instructions, blockhash, fee, tip, None)
+            .await?;
 
         Ok(signatures)
     }
@@ -81,23 +97,27 @@ pub trait DexTrait: Send + Sync + Any {
         mint: &Pubkey,
         token_amount: TokenAmountType,
         slippage_basis_points: u64,
+        custom_ata: Option<&Pubkey>,
         close_mint_ata: bool,
         fee: Option<PriorityFee>,
         tip: Option<u64>,
-    ) -> anyhow::Result<Vec<Signature>> {
+    ) -> Result<Vec<Signature>, TradingEndpointError> {
         let trading_endpoint = self.get_trading_endpoint();
         let payer_pubkey = payer.pubkey();
-        let (pool_info, blockhash, token_amount) = tokio::try_join!(
-            self.get_pool(&mint),
-            trading_endpoint.get_latest_blockhash(),
-            token_amount.to_amount(trading_endpoint.rpc.clone(), &payer_pubkey, mint)
-        )?;
+        let get_amount = async || {
+            token_amount
+                .to_amount(trading_endpoint.rpc.clone(), &payer_pubkey, mint)
+                .await
+                .map_err(|w| TradingEndpointError::SolanaClientError(w))
+        };
+        let (pool_info, blockhash, token_amount) = tokio::try_join!(self.get_pool(&mint), trading_endpoint.get_latest_blockhash(), get_amount())?;
         let sol_lamports = amm_sell_get_sol_out(pool_info.sol_reserves, pool_info.token_reserves, token_amount);
         let sol_lamports_with_slippage = calculate_with_slippage_sell(sol_lamports, slippage_basis_points);
 
         self.sell_immediately(
             payer,
             mint,
+            custom_ata,
             pool_info.creator_vault.as_ref(),
             token_amount,
             sol_lamports_with_slippage,
@@ -105,12 +125,14 @@ pub trait DexTrait: Send + Sync + Any {
             blockhash,
             fee,
             tip,
-        ).await
+        )
+        .await
     }
     async fn sell_immediately(
         &self,
         payer: &Keypair,
         mint: &Pubkey,
+        custom_ata: Option<&Pubkey>,
         extra_address: Option<&Pubkey>,
         token_amount: u64,
         sol_amount: u64,
@@ -118,16 +140,17 @@ pub trait DexTrait: Send + Sync + Any {
         blockhash: Hash,
         fee: Option<PriorityFee>,
         tip: Option<u64>,
-    ) -> anyhow::Result<Vec<Signature>> {
-        let instruction = self.build_sell_instruction(payer, mint, extra_address, SwapInfo { token_amount, sol_amount })?;
+    ) -> Result<Vec<Signature>, TradingEndpointError> {
+        let instruction = self.build_sell_instruction(payer, mint, custom_ata, extra_address, SwapInfo { token_amount, sol_amount })?;
         let instructions = if self.use_wsol() {
-            build_wsol_sell_instructions(payer, mint, instruction, close_mint_ata)?
+            build_wsol_sell_instructions(payer, mint, instruction, close_mint_ata).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?
         } else {
-            build_sol_sell_instructions(payer, mint, instruction, close_mint_ata)?
+            build_sol_sell_instructions(payer, mint, instruction, close_mint_ata).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?
         };
         let signatures = self
             .get_trading_endpoint()
-            .build_and_broadcast_tx(payer, instructions, blockhash, fee, tip, None).await?;
+            .build_and_broadcast_tx(payer, instructions, blockhash, fee, tip, None)
+            .await?;
 
         Ok(signatures)
     }
@@ -138,7 +161,7 @@ pub trait DexTrait: Send + Sync + Any {
         fee: PriorityFee,
         tip: u64,
         items: Vec<BatchBuyParam>,
-    ) -> anyhow::Result<Vec<Signature>> {
+    ) -> Result<Vec<Signature>, TradingEndpointError> {
         let trading_endpoint = self.get_trading_endpoint();
         let (pool_info, blockhash) = tokio::try_join!(self.get_pool(&mint), trading_endpoint.get_latest_blockhash(),)?;
         let mut pool_token_amount = pool_info.token_reserves;
@@ -152,16 +175,16 @@ pub trait DexTrait: Send + Sync + Any {
                 &item.payer,
                 &mint,
                 pool_info.creator_vault.as_ref(),
+                &spl_token::ID,
                 SwapInfo {
                     token_amount: buy_token_amount,
                     sol_amount: sol_lamports_with_slippage,
                 },
             )?;
-            let instructions = if self.use_wsol() {
-                build_wsol_buy_instructions(&item.payer, mint, sol_lamports_with_slippage, instruction, CreateATA::Idempotent)?
-            } else {
-                build_sol_buy_instructions(&item.payer, mint, instruction, CreateATA::Idempotent)?
-            };
+
+            let (_, mut instructions) =
+                build_token_account_instructions(&item.payer, mint, CreateATA::Idempotent).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
+            instructions.push(instruction);
             batch_items.push(BatchTxItem {
                 payer: item.payer,
                 instructions,
@@ -181,7 +204,7 @@ pub trait DexTrait: Send + Sync + Any {
         fee: PriorityFee,
         tip: u64,
         items: Vec<BatchSellParam>,
-    ) -> anyhow::Result<Vec<Signature>> {
+    ) -> Result<Vec<Signature>, TradingEndpointError> {
         let trading_endpoint = self.get_trading_endpoint();
         let (pool_info, blockhash) = tokio::try_join!(self.get_pool(&mint), trading_endpoint.get_latest_blockhash(),)?;
         let mut pool_token_amount = pool_info.token_reserves;
@@ -194,6 +217,7 @@ pub trait DexTrait: Send + Sync + Any {
             let instruction = self.build_sell_instruction(
                 &item.payer,
                 &mint,
+                item.custom_ata.as_ref(),
                 pool_info.creator_vault.as_ref(),
                 SwapInfo {
                     token_amount: sol_amount,
@@ -201,9 +225,11 @@ pub trait DexTrait: Send + Sync + Any {
                 },
             )?;
             let instructions = if self.use_wsol() {
-                build_wsol_sell_instructions(&item.payer, mint, instruction, item.close_mint_ata)?
+                build_wsol_sell_instructions(&item.payer, mint, instruction, item.close_mint_ata)
+                    .map_err(|e| TradingEndpointError::CustomError(e.to_string()))?
             } else {
-                build_sol_sell_instructions(&item.payer, mint, instruction, item.close_mint_ata)?
+                build_sol_sell_instructions(&item.payer, mint, instruction, item.close_mint_ata)
+                    .map_err(|e| TradingEndpointError::CustomError(e.to_string()))?
             };
             batch_items.push(BatchTxItem {
                 payer: item.payer,

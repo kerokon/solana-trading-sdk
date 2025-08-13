@@ -1,4 +1,5 @@
 use super::trading_endpoint::TradingEndpoint;
+use crate::errors::trading_endpoint_error::TradingEndpointError;
 use crate::{
     dex::{dex_traits::DexTrait, types::DexType},
     swqos::SWQoSType,
@@ -26,7 +27,7 @@ impl TradingClient {
         Ok(Self { endpoint, dexs })
     }
 
-    pub async fn initialize(&self) -> anyhow::Result<()> {
+    pub async fn initialize(&self) -> Result<(), TradingEndpointError> {
         for (_, dex) in &self.dexs {
             dex.initialize().await?;
         }

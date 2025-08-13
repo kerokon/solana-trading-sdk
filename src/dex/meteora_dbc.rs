@@ -2,6 +2,7 @@ use super::{dex_traits::DexTrait, meteora_dbc_types::*, types::Create};
 use crate::{
     common::{accounts::PUBKEY_WSOL, trading_endpoint::TradingEndpoint},
     dex::types::{PoolInfo, SwapInfo},
+    errors::trading_endpoint_error::TradingEndpointError,
     instruction::builder::PriorityFee,
 };
 use solana_sdk::{
@@ -19,11 +20,11 @@ pub struct MemeoraDBC {
 
 #[async_trait::async_trait]
 impl DexTrait for MemeoraDBC {
-    async fn initialize(&self) -> anyhow::Result<()> {
+    async fn initialize(&self) -> Result<(), TradingEndpointError> {
         Ok(())
     }
 
-    fn initialized(&self) -> anyhow::Result<()> {
+    fn initialized(&self) -> Result<(), TradingEndpointError> {
         Ok(())
     }
 
@@ -35,14 +36,14 @@ impl DexTrait for MemeoraDBC {
         true
     }
 
-    async fn get_pool(&self, mint: &Pubkey) -> anyhow::Result<PoolInfo> {
+    async fn get_pool(&self, mint: &Pubkey) -> Result<PoolInfo, TradingEndpointError> {
         let pool = self.get_pool_by_base_mint(mint).await?;
         let account = self.endpoint.rpc.get_account(&pool).await?;
         if account.data.is_empty() {
-            return Err(anyhow::anyhow!("Bonding curve not found: {}", pool.to_string()));
+            return Err(TradingEndpointError::CustomError(format!("Bonding curve not found: {}", pool.to_string())));
         }
 
-        let bonding_curve = bincode::deserialize::<VirtualPool>(&account.data)?;
+        let bonding_curve = bincode::deserialize::<VirtualPool>(&account.data).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
 
         Ok(PoolInfo {
             pool,
@@ -54,16 +55,23 @@ impl DexTrait for MemeoraDBC {
         })
     }
 
-    async fn create(&self, _: Keypair, _: Create, _: Option<PriorityFee>, _: Option<u64>) -> anyhow::Result<Vec<Signature>> {
-        Err(anyhow::anyhow!("Not supported"))
+    async fn create(&self, _: Keypair, _: Create, _: Option<PriorityFee>, _: Option<u64>) -> Result<Vec<Signature>, TradingEndpointError> {
+        Err(TradingEndpointError::CustomError("Not supported".to_string()))
     }
 
-    fn build_buy_instruction(&self, payer: &Keypair, mint: &Pubkey, config: Option<&Pubkey>, buy: SwapInfo) -> anyhow::Result<Instruction> {
+    fn build_buy_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        config: Option<&Pubkey>,
+        token_program_account: &Pubkey,
+        buy: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError> {
         self.initialized()?;
 
         let buy_info = SwapInstruction::from_swap_info(&buy, true);
-        let buffer = buy_info.to_buffer()?;
-        let config = config.ok_or_else(|| anyhow::anyhow!("Config must be provided for buy instruction"))?;
+        let buffer = buy_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
+        let config = config.ok_or_else(|| TradingEndpointError::CustomError("Config must be provided for buy instruction".to_string()))?;
         let bonding_curve = Self::get_virtual_pool_pda(mint, config)?;
         let bonding_curve_vault = Self::get_bonding_curve_vault(mint)?;
         let bonding_curve_sol_vault = Self::get_bonding_curve_sol_vault(mint)?;
@@ -82,7 +90,7 @@ impl DexTrait for MemeoraDBC {
                 AccountMeta::new_readonly(*mint, false),
                 AccountMeta::new_readonly(PUBKEY_WSOL, false),
                 AccountMeta::new(payer.pubkey(), true),
-                AccountMeta::new_readonly(spl_token::ID, false),
+                AccountMeta::new_readonly(*token_program_account, false),
                 AccountMeta::new_readonly(spl_token::ID, false),
                 AccountMeta::new_readonly(PUBKEY_METEORA_DBC, false),
                 AccountMeta::new_readonly(PUBKEY_METEORA_DBC_EVENT_AUTHORITY, false),
@@ -91,12 +99,22 @@ impl DexTrait for MemeoraDBC {
         ))
     }
 
-    fn build_sell_instruction(&self, payer: &Keypair, mint: &Pubkey, config: Option<&Pubkey>, sell: SwapInfo) -> anyhow::Result<Instruction> {
+    fn build_sell_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        custom_ata: Option<&Pubkey>,
+        config: Option<&Pubkey>,
+        sell: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError> {
         self.initialized()?;
-
+        let ata = match custom_ata {
+            None => get_associated_token_address(&payer.pubkey(), mint),
+            Some(t) => *t,
+        };
         let sell_info = SwapInstruction::from_swap_info(&sell, false);
-        let buffer = sell_info.to_buffer()?;
-        let config = config.ok_or_else(|| anyhow::anyhow!("Config must be provided for sell instruction"))?;
+        let buffer = sell_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
+        let config = config.ok_or_else(|| TradingEndpointError::CustomError("Config must be provided for sell instruction".to_string()))?;
         let bonding_curve = Self::get_virtual_pool_pda(mint, config)?;
         let bonding_curve_vault = Self::get_bonding_curve_vault(mint)?;
         let bonding_curve_sol_vault = Self::get_bonding_curve_sol_vault(mint)?;
@@ -108,7 +126,7 @@ impl DexTrait for MemeoraDBC {
                 AccountMeta::new_readonly(PUBKEY_METEORA_DBC_POOL_AUTHORITY, false),
                 AccountMeta::new_readonly(*config, false),
                 AccountMeta::new(bonding_curve, false),
-                AccountMeta::new(get_associated_token_address(&payer.pubkey(), mint), false),
+                AccountMeta::new(ata, false),
                 AccountMeta::new(get_associated_token_address(&payer.pubkey(), &PUBKEY_WSOL), false),
                 AccountMeta::new(bonding_curve_vault, false),
                 AccountMeta::new(bonding_curve_sol_vault, false),
@@ -130,25 +148,28 @@ impl MemeoraDBC {
         Self { endpoint }
     }
 
-    pub fn get_virtual_pool_pda(mint: &Pubkey, config: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_virtual_pool_pda(mint: &Pubkey, config: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let seeds: &[&[u8]; 4] = &[VIRTUAL_POOL_SEED, config.as_ref(), mint.as_ref(), PUBKEY_WSOL.as_ref()];
-        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_METEORA_DBC).ok_or_else(|| anyhow::anyhow!("Failed to find virtual pool PDA"))?;
+        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_METEORA_DBC)
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find virtual pool PDA".to_string()))?;
         Ok(pda.0)
     }
 
-    pub fn get_bonding_curve_vault(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_bonding_curve_vault(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let seeds: &[&[u8]; 2] = &[VIRTUAL_POOL_BASE_VAULT, mint.as_ref()];
-        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_METEORA_DBC).ok_or_else(|| anyhow::anyhow!("Failed to find bonding curve vault PDA"))?;
+        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_METEORA_DBC)
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find bonding curve vault PDA".to_string()))?;
         Ok(pda.0)
     }
 
-    pub fn get_bonding_curve_sol_vault(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_bonding_curve_sol_vault(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let seeds: &[&[u8]; 2] = &[VIRTUAL_POOL_QUOTE_VAULT, mint.as_ref()];
-        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_METEORA_DBC).ok_or_else(|| anyhow::anyhow!("Failed to find bonding curve SOL vault PDA"))?;
+        let pda = Pubkey::try_find_program_address(seeds, &PUBKEY_METEORA_DBC)
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find bonding curve SOL vault PDA".to_string()))?;
         Ok(pda.0)
     }
 
-    pub async fn get_pool_by_base_mint(&self, base_mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub async fn get_pool_by_base_mint(&self, base_mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let accounts = self
             .endpoint
             .rpc
@@ -172,7 +193,10 @@ impl MemeoraDBC {
             .await?;
 
         if accounts.is_empty() {
-            return Err(anyhow::anyhow!("No bonding curve found for base mint: {}", base_mint.to_string()));
+            return Err(TradingEndpointError::CustomError(format!(
+                "No bonding curve found for base mint: {}",
+                base_mint.to_string()
+            )));
         }
 
         Ok(accounts[0].0)

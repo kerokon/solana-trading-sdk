@@ -2,10 +2,10 @@ use super::{
     swqos_rpc::{SWQoSClientTrait, SWQoSRequest},
     SWQoSTrait,
 };
-use crate::{common::transaction::Transaction, swqos::swqos_rpc::FormatBase64VersionedTransaction};
+use crate::{common::transaction::Transaction, errors::swqos_error::SWQoSError};
 use rand::seq::IndexedRandom;
 use solana_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::{pubkey, pubkey::Pubkey, transaction::VersionedTransaction};
+use solana_sdk::{pubkey, pubkey::Pubkey};
 use std::sync::Arc;
 
 pub const BLOX_TIP_ACCOUNTS: &[Pubkey] = &[
@@ -32,8 +32,7 @@ pub struct BloxClient {
 
 #[async_trait::async_trait]
 impl SWQoSTrait for BloxClient {
-    async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
-
+    async fn send_transaction(&self, transaction: Transaction) -> Result<(), SWQoSError> {
         let body = serde_json::json!({
             "transaction": {
                 "content": transaction.to_base64_string(),
@@ -55,8 +54,7 @@ impl SWQoSTrait for BloxClient {
             .await
     }
 
-    async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
-
+    async fn send_transactions(&self, transactions: Vec<Transaction>) -> Result<(), SWQoSError> {
         let body = serde_json::json!({
             "entries":  transactions
                 .iter()

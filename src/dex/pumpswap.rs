@@ -7,6 +7,7 @@ use super::{
 };
 use crate::{
     common::{accounts::PUBKEY_WSOL, trading_endpoint::TradingEndpoint},
+    errors::trading_endpoint_error::TradingEndpointError,
     instruction::builder::PriorityFee,
 };
 use once_cell::sync::OnceCell;
@@ -27,18 +28,20 @@ pub struct PumpSwap {
 
 #[async_trait::async_trait]
 impl DexTrait for PumpSwap {
-    async fn initialize(&self) -> anyhow::Result<()> {
+    async fn initialize(&self) -> Result<(), TradingEndpointError> {
         let account = self.endpoint.rpc.get_account(&PUBKEY_GLOBAL_ACCOUNT).await?;
-        let global_account = bincode::deserialize::<GlobalAccount>(&account.data)?;
+        let global_account = bincode::deserialize::<GlobalAccount>(&account.data).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
         let global_account = Arc::new(global_account);
 
-        self.global_account.set(global_account).unwrap();
+        self.global_account
+            .set(global_account)
+            .map_err(|_| TradingEndpointError::CustomError("OnceCell already set".to_string()))?;
         Ok(())
     }
 
-    fn initialized(&self) -> anyhow::Result<()> {
+    fn initialized(&self) -> Result<(), TradingEndpointError> {
         if self.global_account.get().is_none() {
-            return Err(anyhow::anyhow!("PumpSwap not initialized"));
+            return Err(TradingEndpointError::CustomError("PumpSwap not initialized".to_string()));
         }
         Ok(())
     }
@@ -51,7 +54,7 @@ impl DexTrait for PumpSwap {
         true
     }
 
-    async fn get_pool(&self, mint: &Pubkey) -> anyhow::Result<super::types::PoolInfo> {
+    async fn get_pool(&self, mint: &Pubkey) -> Result<super::types::PoolInfo, TradingEndpointError> {
         let pool = Self::get_pool_address(mint)?;
         let pool_base = get_associated_token_address(&pool, &mint);
         let pool_quote = get_associated_token_address(&pool, &PUBKEY_WSOL);
@@ -62,15 +65,17 @@ impl DexTrait for PumpSwap {
         )?;
 
         if pool_account.data.is_empty() {
-            return Err(anyhow::anyhow!("Pool account not found: {}", mint.to_string()));
+            return Err(TradingEndpointError::CustomError(format!("Pool account not found: {}", mint.to_string())));
         }
 
-        let pool_account = bincode::deserialize::<PoolAccount>(&pool_account.data)?;
-        let pool_base_account = pool_base_account.ok_or_else(|| anyhow::anyhow!("Pool base account not found: {}", mint.to_string()))?;
-        let pool_quote_account = pool_quote_account.ok_or_else(|| anyhow::anyhow!("Pool quote account not found: {}", mint.to_string()))?;
+        let pool_account = bincode::deserialize::<PoolAccount>(&pool_account.data).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
+        let pool_base_account =
+            pool_base_account.ok_or_else(|| TradingEndpointError::CustomError(format!("Pool base account not found: {}", mint.to_string())))?;
+        let pool_quote_account =
+            pool_quote_account.ok_or_else(|| TradingEndpointError::CustomError(format!("Pool quote account not found: {}", mint.to_string())))?;
 
-        let pool_base_reserve = u64::from_str(&pool_base_account.token_amount.amount)?;
-        let pool_quote_reserve = u64::from_str(&pool_quote_account.token_amount.amount)?;
+        let pool_base_reserve = u64::from_str(&pool_base_account.token_amount.amount).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
+        let pool_quote_reserve = u64::from_str(&pool_quote_account.token_amount.amount).map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
 
         Ok(super::types::PoolInfo {
             pool,
@@ -82,17 +87,24 @@ impl DexTrait for PumpSwap {
         })
     }
 
-    async fn create(&self, _: Keypair, _: Create, _: Option<PriorityFee>, _: Option<u64>) -> anyhow::Result<Vec<Signature>> {
-        Err(anyhow::anyhow!("Not supported"))
+    async fn create(&self, _: Keypair, _: Create, _: Option<PriorityFee>, _: Option<u64>) -> Result<Vec<Signature>, TradingEndpointError> {
+        Err(TradingEndpointError::CustomError("Not supported".to_string()))
     }
 
-    fn build_buy_instruction(&self, payer: &Keypair, mint: &Pubkey, creator_vault: Option<&Pubkey>, buy: SwapInfo) -> anyhow::Result<Instruction> {
+    fn build_buy_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        creator_vault: Option<&Pubkey>,
+        token_program_account: &Pubkey,
+        buy: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError> {
         self.initialized()?;
 
         let buy_info: BuyInfo = buy.into();
-        let buffer = buy_info.to_buffer()?;
+        let buffer = buy_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
         let pool = Self::get_pool_address(&mint)?;
-        let creator_vault = creator_vault.ok_or(anyhow::anyhow!("Creator vault is required for buy instruction"))?;
+        let creator_vault = creator_vault.ok_or(TradingEndpointError::CustomError("Creator vault is required for buy instruction".to_string()))?;
         let creator_vault_ata = get_associated_token_address(creator_vault, &PUBKEY_WSOL);
         let fee_recipient = self.global_account.get().unwrap().protocol_fee_recipients.choose(&mut rand::rng()).unwrap();
 
@@ -111,7 +123,7 @@ impl DexTrait for PumpSwap {
                 AccountMeta::new(get_associated_token_address(&pool, &PUBKEY_WSOL), false),
                 AccountMeta::new_readonly(*fee_recipient, false),
                 AccountMeta::new(get_associated_token_address(fee_recipient, &PUBKEY_WSOL), false),
-                AccountMeta::new_readonly(spl_token::ID, false),
+                AccountMeta::new_readonly(*token_program_account, false),
                 AccountMeta::new_readonly(spl_token::ID, false),
                 AccountMeta::new_readonly(solana_program::system_program::ID, false),
                 AccountMeta::new_readonly(spl_associated_token_account::ID, false),
@@ -123,16 +135,26 @@ impl DexTrait for PumpSwap {
         ))
     }
 
-    fn build_sell_instruction(&self, payer: &Keypair, mint: &Pubkey, creator_vault: Option<&Pubkey>, sell: SwapInfo) -> anyhow::Result<Instruction> {
+    fn build_sell_instruction(
+        &self,
+        payer: &Keypair,
+        mint: &Pubkey,
+        custom_ata: Option<&Pubkey>,
+        creator_vault: Option<&Pubkey>,
+        sell: SwapInfo,
+    ) -> Result<Instruction, TradingEndpointError> {
         self.initialized()?;
 
         let sell_info: SellInfo = sell.into();
-        let buffer = sell_info.to_buffer()?;
+        let buffer = sell_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
         let pool = Self::get_pool_address(&mint)?;
-        let creator_vault = creator_vault.ok_or(anyhow::anyhow!("Creator vault is required for buy instruction"))?;
+        let creator_vault = creator_vault.ok_or(TradingEndpointError::CustomError("Creator vault is required for buy instruction".to_string()))?;
         let creator_vault_ata = get_associated_token_address(creator_vault, &PUBKEY_WSOL);
         let fee_recipient = self.global_account.get().unwrap().protocol_fee_recipients.choose(&mut rand::rng()).unwrap();
-
+        let ata = match custom_ata {
+            None => get_associated_token_address(&payer.pubkey(), mint),
+            Some(t) => *t,
+        };
         Ok(Instruction::new_with_bytes(
             PUBKEY_PUMPSWAP,
             &buffer,
@@ -142,7 +164,7 @@ impl DexTrait for PumpSwap {
                 AccountMeta::new_readonly(PUBKEY_GLOBAL_ACCOUNT, false),
                 AccountMeta::new_readonly(*mint, false),
                 AccountMeta::new_readonly(PUBKEY_WSOL, false),
-                AccountMeta::new(get_associated_token_address(&payer.pubkey(), mint), false),
+                AccountMeta::new(ata, false),
                 AccountMeta::new(get_associated_token_address(&payer.pubkey(), &PUBKEY_WSOL), false),
                 AccountMeta::new(get_associated_token_address(&pool, mint), false),
                 AccountMeta::new(get_associated_token_address(&pool, &PUBKEY_WSOL), false),
@@ -169,19 +191,19 @@ impl PumpSwap {
         }
     }
 
-    pub fn get_creator_vault(creator: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_creator_vault(creator: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let pda = Pubkey::try_find_program_address(&[b"creator_vault", creator.as_ref()], &PUBKEY_PUMPSWAP)
-            .ok_or_else(|| anyhow::anyhow!("Failed to find creator vault PDA"))?;
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find creator vault PDA".to_string()))?;
         Ok(pda.0)
     }
 
-    pub fn get_pool_authority_pda(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_pool_authority_pda(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let pda = Pubkey::try_find_program_address(&[b"pool-authority", mint.as_ref()], &PUMPFUN_PROGRAM)
-            .ok_or_else(|| anyhow::anyhow!("Failed to find pool authority PDA"))?;
+            .ok_or_else(|| TradingEndpointError::CustomError("Failed to find pool authority PDA".to_string()))?;
         Ok(pda.0)
     }
 
-    pub fn get_pool_address(mint: &Pubkey) -> anyhow::Result<Pubkey> {
+    pub fn get_pool_address(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {
         let pda = Pubkey::try_find_program_address(
             &[
                 b"pool",
@@ -192,7 +214,7 @@ impl PumpSwap {
             ],
             &PUBKEY_PUMPSWAP,
         )
-        .ok_or_else(|| anyhow::anyhow!("Failed to find pool address PDA"))?;
+        .ok_or_else(|| TradingEndpointError::CustomError("Failed to find pool address PDA".to_string()))?;
         Ok(pda.0)
     }
 }

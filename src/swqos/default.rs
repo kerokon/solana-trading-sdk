@@ -2,7 +2,11 @@ use super::{
     swqos_rpc::{SWQoSClientTrait, SWQoSRequest},
     SWQoSTrait,
 };
-use crate::{common::transaction::Transaction, instruction::builder::{build_transaction, PriorityFee}};
+use crate::{
+    common::transaction::Transaction,
+    errors::swqos_error::SWQoSError,
+    instruction::builder::{build_transaction, PriorityFee},
+};
 use rand::seq::IndexedRandom;
 use solana_client::{nonblocking::rpc_client::RpcClient, rpc_config::RpcTransactionConfig};
 use solana_sdk::{
@@ -10,7 +14,6 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
-    transaction::VersionedTransaction,
 };
 use solana_transaction_status::UiTransactionEncoding;
 use spl_associated_token_account::{get_associated_token_address, instruction::create_associated_token_account_idempotent};
@@ -28,8 +31,7 @@ pub struct DefaultSWQoSClient {
 
 #[async_trait::async_trait]
 impl SWQoSTrait for DefaultSWQoSClient {
-    async fn send_transaction(&self, transaction: Transaction) -> anyhow::Result<()> {
-
+    async fn send_transaction(&self, transaction: Transaction) -> Result<(), SWQoSError> {
         self.swqos_client
             .swqos_send_transaction(SWQoSRequest {
                 name: self.name.clone(),
@@ -40,8 +42,7 @@ impl SWQoSTrait for DefaultSWQoSClient {
             .await
     }
 
-    async fn send_transactions(&self, transactions: Vec<Transaction>) -> anyhow::Result<()> {
-
+    async fn send_transactions(&self, transactions: Vec<Transaction>) -> Result<(), SWQoSError> {
         self.swqos_client
             .swqos_send_transactions(SWQoSRequest {
                 name: self.name.clone(),
@@ -80,10 +81,10 @@ impl DefaultSWQoSClient {
         }
     }
 
-    pub async fn transfer(&self, from: &Keypair, to: &Pubkey, amount: u64, fee: Option<PriorityFee>) -> anyhow::Result<Signature> {
+    pub async fn transfer(&self, from: &Keypair, to: &Pubkey, amount: u64, fee: Option<PriorityFee>) -> Result<Signature, SWQoSError> {
         let blockhash = self.rpc_client.get_latest_blockhash().await?;
         let instruction = solana_sdk::system_instruction::transfer(&from.pubkey(), to, amount);
-        let transaction = build_transaction(from, vec![instruction], blockhash, fee, None, None)?;
+        let transaction = build_transaction(from, vec![instruction], blockhash, fee, None, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
         let signature = match transaction {
             Transaction::Legacy(ref tx) => tx.signatures[0],
             Transaction::Versioned(ref tx) => tx.signatures[0],
@@ -92,13 +93,13 @@ impl DefaultSWQoSClient {
         Ok(signature)
     }
 
-    pub async fn batch_transfer(&self, from: &Keypair, to: Vec<TransferInfo>, fee: Option<PriorityFee>) -> anyhow::Result<Signature> {
+    pub async fn batch_transfer(&self, from: &Keypair, to: Vec<TransferInfo>, fee: Option<PriorityFee>) -> Result<Signature, SWQoSError> {
         let blockhash = self.rpc_client.get_latest_blockhash().await?;
         let instructions = to
             .iter()
             .map(|transfer| solana_sdk::system_instruction::transfer(&from.pubkey(), &transfer.to, transfer.amount))
             .collect::<Vec<_>>();
-        let transaction = build_transaction(from, instructions, blockhash, fee, None, None)?;
+        let transaction = build_transaction(from, instructions, blockhash, fee, None, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
         let signature = match transaction {
             Transaction::Legacy(ref tx) => tx.signatures[0],
             Transaction::Versioned(ref tx) => tx.signatures[0],
@@ -107,13 +108,14 @@ impl DefaultSWQoSClient {
         Ok(signature)
     }
 
-    pub async fn spl_transfer(&self, from: &Keypair, to: &Pubkey, mint: &Pubkey, amount: u64, fee: Option<PriorityFee>) -> anyhow::Result<Signature> {
+    pub async fn spl_transfer(&self, from: &Keypair, to: &Pubkey, mint: &Pubkey, amount: u64, fee: Option<PriorityFee>) -> Result<Signature, SWQoSError> {
         let blockhash = self.rpc_client.get_latest_blockhash().await?;
         let from_ata = get_associated_token_address(&from.pubkey(), mint);
         let to_ata = get_associated_token_address(to, mint);
         let create_ata = create_associated_token_account_idempotent(&from.pubkey(), to, &mint, &spl_token::ID);
-        let instruction = spl_token::instruction::transfer(&spl_token::ID, &from_ata, &to_ata, &from.pubkey(), &[], amount)?;
-        let transaction = build_transaction(from, vec![create_ata, instruction], blockhash, fee, None, None)?;
+        let instruction =
+            spl_token::instruction::transfer(&spl_token::ID, &from_ata, &to_ata, &from.pubkey(), &[], amount).map_err(|e| SWQoSError::Custom(e.to_string()))?;
+        let transaction = build_transaction(from, vec![create_ata, instruction], blockhash, fee, None, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
         let signature = match transaction {
             Transaction::Legacy(ref tx) => tx.signatures[0],
             Transaction::Versioned(ref tx) => tx.signatures[0],
@@ -122,7 +124,7 @@ impl DefaultSWQoSClient {
         Ok(signature)
     }
 
-    pub async fn spl_batch_transfer(&self, from: &Keypair, to: Vec<TransferInfo>, mint: &Pubkey, fee: Option<PriorityFee>) -> anyhow::Result<Signature> {
+    pub async fn spl_batch_transfer(&self, from: &Keypair, to: Vec<TransferInfo>, mint: &Pubkey, fee: Option<PriorityFee>) -> Result<Signature, SWQoSError> {
         let blockhash = self.rpc_client.get_latest_blockhash().await?;
         let from_ata = get_associated_token_address(&from.pubkey(), mint);
         let mut instructions = Vec::new();
@@ -130,12 +132,13 @@ impl DefaultSWQoSClient {
         for transfer in &to {
             let to_ata = get_associated_token_address(&transfer.to, mint);
             let create_ata = create_associated_token_account_idempotent(&from.pubkey(), &transfer.to, &mint, &spl_token::ID);
-            let instruction = spl_token::instruction::transfer(&spl_token::ID, &from_ata, &to_ata, &from.pubkey(), &[], transfer.amount)?;
+            let instruction = spl_token::instruction::transfer(&spl_token::ID, &from_ata, &to_ata, &from.pubkey(), &[], transfer.amount)
+                .map_err(|e| SWQoSError::Custom(e.to_string()))?;
             instructions.push(create_ata);
             instructions.push(instruction);
         }
 
-        let transaction = build_transaction(from, instructions, blockhash, fee, None, None)?;
+        let transaction = build_transaction(from, instructions, blockhash, fee, None, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
         let signature = match transaction {
             Transaction::Legacy(ref tx) => tx.signatures[0],
             Transaction::Versioned(ref tx) => tx.signatures[0],
@@ -144,7 +147,7 @@ impl DefaultSWQoSClient {
         Ok(signature)
     }
 
-    pub async fn wait_for_confirm(&self, signature: &Signature) -> anyhow::Result<()> {
+    pub async fn wait_for_confirm(&self, signature: &Signature) -> Result<(), SWQoSError> {
         const MAX_WAIT_SECONDS: u64 = 10;
         let ts = std::time::SystemTime::now();
         loop {
@@ -165,7 +168,7 @@ impl DefaultSWQoSClient {
                 }
             }
             if ts.elapsed().unwrap().as_secs() > MAX_WAIT_SECONDS {
-                return Err(anyhow::anyhow!("Transaction confirmation timedout: {:?}", signature));
+                return Err(SWQoSError::Custom(format!("Transaction confirmation timedout: {:?}", signature)));
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
