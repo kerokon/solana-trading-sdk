@@ -35,7 +35,7 @@ pub struct Create {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DexType {
-    Pumpfun,
+    Pumpfun(Option<Pubkey>),
     PumpSwap,
     RayBonk,
     Boopfun,
@@ -44,12 +44,12 @@ pub enum DexType {
 
 impl DexType {
     pub fn all() -> Vec<DexType> {
-        vec![DexType::Pumpfun, DexType::PumpSwap, DexType::RayBonk, DexType::Boopfun, DexType::Believe]
+        vec![DexType::Pumpfun(None), DexType::PumpSwap, DexType::RayBonk, DexType::Boopfun, DexType::Believe]
     }
 
     pub fn instantiate(&self, endpoint: Arc<TradingEndpoint>) -> Arc<dyn DexTrait> {
         match self {
-            DexType::Pumpfun => Arc::new(pumpfun::Pumpfun::new(endpoint)),
+            DexType::Pumpfun(t) => Arc::new(pumpfun::Pumpfun::new(endpoint, *t)),
             DexType::PumpSwap => Arc::new(pumpswap::PumpSwap::new(endpoint)),
             DexType::RayBonk => Arc::new(raydium_bonk::RaydiumBonk::new(endpoint)),
             DexType::Boopfun => Arc::new(boopfun::Boopfun::new(endpoint)),

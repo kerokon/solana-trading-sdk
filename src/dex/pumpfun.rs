@@ -5,6 +5,7 @@ use super::{
     pumpfun_types::*,
     types::{Create, PoolInfo, SwapInfo},
 };
+use crate::common::trading_endpoint::TransactionType;
 use crate::{common::trading_endpoint::TradingEndpoint, errors::trading_endpoint_error::TradingEndpointError, instruction::builder::PriorityFee};
 use borsh::BorshSerialize;
 use once_cell::sync::OnceCell;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 pub struct Pumpfun {
     pub endpoint: Arc<TradingEndpoint>,
     pub global_account: OnceCell<Arc<GlobalAccount>>,
+    custom_router: Option<Pubkey>,
 }
 
 #[async_trait::async_trait]
@@ -46,6 +48,7 @@ impl DexTrait for Pumpfun {
         self.endpoint.clone()
     }
 
+
     fn use_wsol(&self) -> bool {
         false
     }
@@ -69,7 +72,13 @@ impl DexTrait for Pumpfun {
         })
     }
 
-    async fn create(&self, payer: Keypair, create: Create, fee: Option<PriorityFee>, tip: Option<u64>) -> Result<Vec<Signature>, TradingEndpointError> {
+    async fn create(
+        &self,
+        payer: Keypair,
+        create: Create,
+        fee: Option<PriorityFee>,
+        additional_tip: Option<u64>,
+    ) -> Result<Vec<Signature>, TradingEndpointError> {
         let mint = create.mint_private_key.pubkey();
         let buy_sol_amount = create.buy_sol_amount;
         let slippage_basis_points = create.slippage_basis_points.unwrap_or(0);
@@ -131,7 +140,16 @@ impl DexTrait for Pumpfun {
 
         let signatures = self
             .endpoint
-            .build_and_broadcast_tx(&payer, instructions, blockhash, fee, tip, Some(vec![&create.mint_private_key]))
+            .build_and_broadcast_tx(
+                TransactionType::Create,
+                &payer,
+                instructions,
+                None,
+                vec![blockhash],
+                fee,
+                additional_tip.unwrap_or_default(),
+                Some(vec![&create.mint_private_key]),
+            )
             .await?;
 
         Ok(signatures)
@@ -151,8 +169,12 @@ impl DexTrait for Pumpfun {
         let buffer = buy_info.to_buffer().map_err(|e| TradingEndpointError::CustomError(e.to_string()))?;
         let bonding_curve = Self::get_bonding_curve_pda(mint)?;
 
+        let program = match self.custom_router {
+            None => PUMPFUN_PROGRAM,
+            Some(t) => t,
+        };
         Ok(Instruction::new_with_bytes(
-            PUMPFUN_PROGRAM,
+            program,
             &buffer,
             vec![
                 AccountMeta::new_readonly(PUBKEY_GLOBAL_ACCOUNT, false),
@@ -172,6 +194,8 @@ impl DexTrait for Pumpfun {
                 AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
                 AccountMeta::new(Self::get_global_volume_accumulator_pda()?, false),
                 AccountMeta::new(Self::get_user_volume_accumulator_pda(&payer.pubkey())?, false),
+                AccountMeta::new(Self::get_fee_config_pda().unwrap(), false),
+                AccountMeta::new_readonly(PUMPFUN_FEE_PROGRAM, false),
             ],
         ))
     }
@@ -214,19 +238,27 @@ impl DexTrait for Pumpfun {
                 AccountMeta::new_readonly(spl_token::ID, false),
                 AccountMeta::new_readonly(PUBKEY_EVENT_AUTHORITY, false),
                 AccountMeta::new_readonly(PUMPFUN_PROGRAM, false),
-                AccountMeta::new(Self::get_global_volume_accumulator_pda()?, false),
-                AccountMeta::new(Self::get_user_volume_accumulator_pda(&payer.pubkey())?, false),
+                AccountMeta::new(Self::get_fee_config_pda().unwrap(), false),
+                AccountMeta::new_readonly(PUMPFUN_FEE_PROGRAM, false),
             ],
         ))
     }
 }
 
 impl Pumpfun {
-    pub fn new(endpoint: Arc<TradingEndpoint>) -> Self {
+    pub fn new(endpoint: Arc<TradingEndpoint>, custom_router: Option<Pubkey>) -> Self {
         Self {
             endpoint,
+            custom_router,
             global_account: OnceCell::new(),
         }
+    }
+
+    pub fn get_fee_config_pda() -> Option<Pubkey> {
+        let seeds: &[&[u8]; 2] = &[FEE_CONFIG_SEED, PUMPFUN_PROGRAM.as_ref()];
+        let program_id: &Pubkey = &PUMPFUN_FEE_PROGRAM;
+        let pda: Option<(Pubkey, u8)> = Pubkey::try_find_program_address(seeds, program_id);
+        pda.map(|pubkey| pubkey.0)
     }
 
     pub fn get_bonding_curve_pda(mint: &Pubkey) -> Result<Pubkey, TradingEndpointError> {

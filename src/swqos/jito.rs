@@ -38,6 +38,7 @@ pub struct JitoClient {
     pub rpc_client: Arc<RpcClient>,
     pub swqos_endpoint: String,
     pub swqos_client: Arc<reqwest::Client>,
+    pub tip_accounts: Vec<Pubkey>,
 }
 
 #[async_trait::async_trait]
@@ -79,7 +80,7 @@ impl SWQoSTrait for JitoClient {
     }
 
     fn get_tip_account(&self) -> Option<Pubkey> {
-        Some(*JITO_TIP_ACCOUNTS.choose(&mut rand::rng())?)
+        Some(*self.tip_accounts.choose(&mut rand::rng())?)
     }
 
     fn get_name(&self) -> &str {
@@ -88,13 +89,14 @@ impl SWQoSTrait for JitoClient {
 }
 
 impl JitoClient {
-    pub fn new(rpc_client: Arc<RpcClient>, endpoint: String) -> Self {
+    pub fn new(rpc_client: Arc<RpcClient>, endpoint: String, tip_accounts: Vec<Pubkey>) -> Self {
         let swqos_client = reqwest::Client::new_swqos_client();
 
         Self {
             rpc_client,
             swqos_endpoint: endpoint,
             swqos_client: Arc::new(swqos_client),
+            tip_accounts,
         }
     }
 }

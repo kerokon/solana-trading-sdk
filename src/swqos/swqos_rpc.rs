@@ -34,7 +34,13 @@ impl FormatBase64VersionedTransaction for solana_sdk::transaction::Transaction {
 #[async_trait::async_trait]
 pub trait SWQoSClientTrait {
     fn new_swqos_client() -> reqwest::Client {
-        reqwest::Client::builder().timeout(SWQOS_RPC_TIMEOUT).build().unwrap()
+        reqwest::Client::builder()
+            .http1_only()
+            .tcp_keepalive(Some(Duration::from_secs(1_000_000)))
+            .pool_idle_timeout(None)
+            .timeout(SWQOS_RPC_TIMEOUT)
+            .build()
+            .unwrap()
     }
 
     async fn swqos_send_transaction(&self, request: SWQoSRequest) -> Result<(), SWQoSError>;

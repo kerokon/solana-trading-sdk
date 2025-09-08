@@ -28,6 +28,7 @@ pub struct BloxClient {
     pub swqos_endpoint: String,
     pub swqos_header: Option<(String, String)>,
     pub swqos_client: Arc<reqwest::Client>,
+    pub tip_accounts: Vec<Pubkey>,
 }
 
 #[async_trait::async_trait]
@@ -82,7 +83,7 @@ impl SWQoSTrait for BloxClient {
     }
 
     fn get_tip_account(&self) -> Option<Pubkey> {
-        Some(*BLOX_TIP_ACCOUNTS.choose(&mut rand::rng())?)
+        Some(*self.tip_accounts.choose(&mut rand::rng())?)
     }
 
     fn get_name(&self) -> &str {
@@ -91,7 +92,7 @@ impl SWQoSTrait for BloxClient {
 }
 
 impl BloxClient {
-    pub fn new(rpc_client: Arc<RpcClient>, endpoint: String, auth_token: String) -> Self {
+    pub fn new(rpc_client: Arc<RpcClient>, endpoint: String, auth_token: String, tip_accounts: Vec<Pubkey>) -> Self {
         let swqos_client = reqwest::Client::new_swqos_client();
 
         Self {
@@ -99,6 +100,7 @@ impl BloxClient {
             swqos_endpoint: endpoint,
             swqos_header: Some(("Authorization".to_string(), auth_token)),
             swqos_client: Arc::new(swqos_client),
+            tip_accounts,
         }
     }
 }

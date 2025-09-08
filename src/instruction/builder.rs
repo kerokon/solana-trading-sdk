@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use solana_program::program_pack::Pack;
 use solana_program::system_instruction;
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction,
     hash::Hash,
     instruction::Instruction,
     message::{v0, Message, VersionedMessage},
@@ -20,11 +19,23 @@ use spl_associated_token_account::{
     instruction::{create_associated_token_account, create_associated_token_account_idempotent},
 };
 use spl_token::instruction::{close_account, initialize_account3, sync_native};
+use std::ops::Add;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct PriorityFee {
     pub unit_limit: u32,
     pub unit_price: u64,
+}
+
+impl Add for PriorityFee {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            unit_limit: self.unit_limit.saturating_add(rhs.unit_limit),
+            unit_price: self.unit_price.max(rhs.unit_price),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -37,23 +48,9 @@ pub fn build_transaction(
     payer: &Keypair,
     instructions: Vec<Instruction>,
     blockhash: Hash,
-    fee: Option<PriorityFee>,
-    tip: Option<TipFee>,
     other_signers: Option<Vec<&Keypair>>,
 ) -> anyhow::Result<Transaction> {
-    let mut insts = vec![];
-    if let Some(fee) = fee {
-        insts.push(ComputeBudgetInstruction::set_compute_unit_price(fee.unit_price));
-        insts.push(ComputeBudgetInstruction::set_compute_unit_limit(fee.unit_limit));
-    }
-
-    if let Some(tip) = tip {
-        insts.push(solana_sdk::system_instruction::transfer(&payer.pubkey(), &tip.tip_account, tip.tip_lamports));
-    }
-
-    insts.extend(instructions);
-
-    let v0_message: v0::Message = v0::Message::try_compile(&payer.pubkey(), &insts, &[], blockhash)?;
+    let v0_message: v0::Message = v0::Message::try_compile(&payer.pubkey(), &instructions, &[], blockhash)?;
     let versioned_message: VersionedMessage = VersionedMessage::V0(v0_message);
     let signers = vec![payer].into_iter().chain(other_signers.unwrap_or_default().into_iter()).collect::<Vec<_>>();
     let transaction = VersionedTransaction::try_new(versioned_message, &signers)?;

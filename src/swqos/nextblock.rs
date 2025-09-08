@@ -25,6 +25,7 @@ pub struct NextBlockClient {
     pub swqos_endpoint: String,
     pub swqos_header: Option<(String, String)>,
     pub swqos_client: Arc<reqwest::Client>,
+    pub tip_accounts: Vec<Pubkey>,
 }
 
 #[async_trait::async_trait]
@@ -92,7 +93,7 @@ impl SWQoSTrait for NextBlockClient {
 }
 
 impl NextBlockClient {
-    pub fn new(rpc_client: Arc<RpcClient>, endpoint: String, auth_token: String) -> Self {
+    pub fn new(rpc_client: Arc<RpcClient>, endpoint: String, auth_token: String, tip_accounts: Vec<Pubkey>) -> Self {
         let swqos_client = reqwest::Client::new_swqos_client();
 
         Self {
@@ -100,6 +101,7 @@ impl NextBlockClient {
             swqos_endpoint: endpoint,
             swqos_header: Some(("Authorization".to_string(), auth_token)),
             swqos_client: Arc::new(swqos_client),
+            tip_accounts,
         }
     }
 }

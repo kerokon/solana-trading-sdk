@@ -84,7 +84,7 @@ impl DefaultSWQoSClient {
     pub async fn transfer(&self, from: &Keypair, to: &Pubkey, amount: u64, fee: Option<PriorityFee>) -> Result<Signature, SWQoSError> {
         let blockhash = self.rpc_client.get_latest_blockhash().await?;
         let instruction = solana_sdk::system_instruction::transfer(&from.pubkey(), to, amount);
-        let transaction = build_transaction(from, vec![instruction], blockhash, fee, None, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
+        let transaction = build_transaction(from, vec![instruction], blockhash, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
         let signature = match transaction {
             Transaction::Legacy(ref tx) => tx.signatures[0],
             Transaction::Versioned(ref tx) => tx.signatures[0],
@@ -99,7 +99,7 @@ impl DefaultSWQoSClient {
             .iter()
             .map(|transfer| solana_sdk::system_instruction::transfer(&from.pubkey(), &transfer.to, transfer.amount))
             .collect::<Vec<_>>();
-        let transaction = build_transaction(from, instructions, blockhash, fee, None, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
+        let transaction = build_transaction(from, instructions, blockhash, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
         let signature = match transaction {
             Transaction::Legacy(ref tx) => tx.signatures[0],
             Transaction::Versioned(ref tx) => tx.signatures[0],
@@ -115,7 +115,7 @@ impl DefaultSWQoSClient {
         let create_ata = create_associated_token_account_idempotent(&from.pubkey(), to, &mint, &spl_token::ID);
         let instruction =
             spl_token::instruction::transfer(&spl_token::ID, &from_ata, &to_ata, &from.pubkey(), &[], amount).map_err(|e| SWQoSError::Custom(e.to_string()))?;
-        let transaction = build_transaction(from, vec![create_ata, instruction], blockhash, fee, None, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
+        let transaction = build_transaction(from, vec![create_ata, instruction], blockhash, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
         let signature = match transaction {
             Transaction::Legacy(ref tx) => tx.signatures[0],
             Transaction::Versioned(ref tx) => tx.signatures[0],
@@ -138,7 +138,7 @@ impl DefaultSWQoSClient {
             instructions.push(instruction);
         }
 
-        let transaction = build_transaction(from, instructions, blockhash, fee, None, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
+        let transaction = build_transaction(from, instructions, blockhash, None).map_err(|e| SWQoSError::Custom(e.to_string()))?;
         let signature = match transaction {
             Transaction::Legacy(ref tx) => tx.signatures[0],
             Transaction::Versioned(ref tx) => tx.signatures[0],

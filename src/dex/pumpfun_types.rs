@@ -13,12 +13,16 @@ pub const AMM_PROGRAM: Pubkey = pubkey!("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSU
 pub const PUBKEY_PUMPFUN_GLOBAL_VOLUME_ACCUMULATOR: Pubkey = pubkey!("Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y");
 pub const PUBKEY_PUMPFUN_USER_VOLUME_ACCUMULATOR: Pubkey = pubkey!("8BWnAfvqm9BGtKCBk61Ern2eMT3SE192FDCVWTGibj1N");
 
+pub const PUMPFUN_FEE_PROGRAM: Pubkey = pubkey!("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
+
 pub const GLOBAL_SEED: &[u8] = b"global";
 pub const MINT_AUTHORITY_SEED: &[u8] = b"mint-authority";
 pub const BONDING_CURVE_SEED: &[u8] = b"bonding-curve";
 pub const CREATOR_VAULT_SEED: &[u8] = b"creator-vault";
+
 pub const USER_VOLUME_ACCUMULATOR_SEED: &[u8] = b"user_volume_accumulator";
 pub const GLOBAL_VOLUME_ACCUMULATOR_SEED: &[u8] = b"global_volume_accumulator";
+pub const FEE_CONFIG_SEED: &[u8] = b"fee_config";
 pub const METADATA_SEED: &[u8] = b"metadata";
 
 pub const INITIAL_VIRTUAL_TOKEN_RESERVES: u64 = 1_073_000_000_000_000;
